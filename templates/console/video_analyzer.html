@@ -1,0 +1,269 @@
+{% extends "console/admin_base.html" %}
+{% block title %}Video Analyzer{% endblock %}
+{% block admin_content %}
+<section class="analyzer-page">
+  <div class="analyzer-grid">
+    <section class="analysis-panel">
+      <div class="panel-head">
+        <div>
+          <h2 id="source-title">Pavement condition assessment</h2>
+          <p id="source-copy">Upload road survey footage with route limits before running defect detection.</p>
+          <div class="stream-toggle" aria-label="Video source mode">
+            <button type="button" class="active" id="recorded-mode">Recorder</button>
+            <button type="button" id="live-mode">Stream</button>
+          </div>
+        </div>
+        <form method="post" enctype="multipart/form-data" class="panel-actions analyzer-form" id="analyze-form">
+          {% csrf_token %}
+          <label class="file-button" id="upload-label">
+            Upload and detect
+            {{ form.video }}
+          </label>
+          <div class="route-upload-grid" aria-label="Survey route information">
+            <label>Road section {{ form.road_name }}</label>
+            <label>Route start {{ form.route_start }}</label>
+            <label>Route end {{ form.route_end }}</label>
+            <label>Barangay {{ form.barangay }}</label>
+            <label>City {{ form.city }}</label>
+            <label>Chainage / station {{ form.chainage_station }}</label>
+          </div>
+          <label class="mini-confidence">
+            Min confidence
+            {{ form.min_confidence }}
+          </label>
+          <button class="primary-mini manual-analyze" type="submit">Assess</button>
+          {% if form.non_field_errors %}
+            <div class="error-banner">{{ form.non_field_errors|join:", " }}</div>
+          {% endif %}
+        </form>
+      </div>
+
+      <div class="live-banner" id="live-banner" hidden>
+        Stream source selected. Configure a live camera feed before running pavement defect assessment.
+      </div>
+
+      <div class="analysis-status-panel">
+        <div>
+          <span>Upload status</span>
+          <strong>{% if analysis %}{{ analysis.status|default:"ready" }}{% else %}Waiting for footage{% endif %}</strong>
+        </div>
+        <div>
+          <span>Source</span>
+          <strong
+            id="source-status"
+            data-recorded-source="{% if analysis.original_filename %}{{ analysis.original_filename }}{% else %}No upload selected{% endif %}"
+          >
+            {% if analysis.original_filename %}{{ analysis.original_filename }}{% else %}No upload selected{% endif %}
+          </strong>
+        </div>
+        <div>
+          <span>Result</span>
+          <strong>{{ detections|length }} pavement defects</strong>
+        </div>
+        <div>
+          <span>Route</span>
+          <strong>{% if analysis.route_start or analysis.route_end %}{{ analysis.route_start|default:"Start TBD" }} to {{ analysis.route_end|default:"End TBD" }}{% else %}Route required on upload{% endif %}</strong>
+        </div>
+      </div>
+
+      <div class="video-frame" id="video-frame">
+        {% if analysis.uploaded_video %}
+          <video class="uploaded-video" id="uploaded-video" muted playsinline>
+            <source src="{{ analysis.uploaded_video.url }}">
+          </video>
+        {% endif %}
+        <div class="road-scene {% if analysis.uploaded_video %}overlay-scene{% endif %}" data-duration="{{ analysis.duration_seconds|default:40 }}">
+          <span class="detect-count" id="detect-count">DEFECT - 0</span>
+          <span class="fps-chip" id="fps-chip">{{ analysis.inference_fps|default:"0" }} FPS</span>
+          {% for event in detections %}
+            <span
+              class="box is-hidden{% if event.bbox_y > 62 %} is-lower{% endif %}{% if event.bbox_x > 64 %} is-right{% endif %}"
+              data-event-code="{{ event.event_code }}"
+              data-time="{{ event.timecode_seconds }}"
+              style="left: {{ event.bbox_x }}%; top: {{ event.bbox_y }}%; width: {{ event.bbox_w }}%; height: {{ event.bbox_h }}%; --mask-polygon: {{ event.mask_polygon|default:'8% 45%, 20% 20%, 48% 9%, 76% 18%, 94% 48%, 83% 79%, 51% 92%, 18% 76%' }}; --mask-centroid-x: {{ event.mask_centroid_x|default:50 }}%; --mask-centroid-y: {{ event.mask_centroid_y|default:50 }}%;"
+            >
+              <b>{{ event.confidence }}% Pavement defect</b>
+              <span class="box-readout" aria-label="Mask engineering measurements">
+                <span>Len {{ event.damage_length_m }}m</span>
+                <span>Wid {{ event.damage_width_m }}m</span>
+                <span>Per {{ event.damage_perimeter_m }}m</span>
+                <span>Surf {{ event.damage_surface_area_sqm }}sqm</span>
+                <span>Repair {{ event.estimated_repair_area_sqm }}sqm</span>
+              </span>
+              <i class="segment-mask" aria-hidden="true"></i>
+              <i class="segment-centroid" aria-hidden="true"></i>
+              <i class="bbox-vertex top-left" aria-hidden="true"></i>
+              <i class="bbox-vertex top-right" aria-hidden="true"></i>
+              <i class="bbox-vertex bottom-right" aria-hidden="true"></i>
+              <i class="bbox-vertex bottom-left" aria-hidden="true"></i>
+            </span>
+          {% endfor %}
+          <div class="playbar">
+            <button type="button" id="play-toggle">Play</button>
+            <span id="timeline-label">0:00 / {{ analysis.duration_seconds|default:40 }}s</span>
+            <i id="timeline-progress"></i>
+            <button type="button" id="mute-toggle">Mute</button>
+            <button type="button" id="fullscreen-toggle">Full</button>
+            <button type="button" id="more-toggle">More</button>
+          </div>
+          <div class="more-menu" id="more-menu" hidden>
+            <button type="button" id="restart-analysis">Restart playback</button>
+            <button type="button" id="show-all-detections">Show all detections</button>
+            <button type="button" id="hide-all-detections">Hide detections</button>
+            <button type="button" id="hide-actions-menu">Hide actions</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="analyzer-metrics">
+        <article><span>Frames</span><strong>{{ analysis.frames_processed|default:0 }}</strong></article>
+        <article><span>Inference</span><strong>{{ analysis.inference_fps|default:"0" }} fps</strong></article>
+        <article><span>Defects</span><strong id="metric-detections">{{ detections|length }}</strong></article>
+        <article class="critical"><span>Critical</span><strong>{{ analysis.critical_count|default:0 }}</strong></article>
+      </div>
+
+      <section class="engineering-panel">
+        {% if engineering_recommendation %}
+          <div class="engineering-priority-row">
+            <span class="priority-chip {{ engineering_recommendation.priority }}">{{ engineering_recommendation.priority }}</span>
+          </div>
+          <h3 class="engineering-section-title">Damage assessment</h3>
+          <div class="engineering-grid">
+            <article>
+              <span>Length</span>
+              <strong>{{ engineering_recommendation.estimated_length_m }} m</strong>
+            </article>
+            <article>
+              <span>Width</span>
+              <strong>{{ engineering_recommendation.estimated_width_m }} m</strong>
+            </article>
+            <article>
+              <span>Perimeter</span>
+              <strong>{{ engineering_recommendation.estimated_perimeter_m }} m</strong>
+            </article>
+            <article>
+              <span>Surface area</span>
+              <strong>{{ engineering_recommendation.estimated_affected_area_sqm }} sqm</strong>
+            </article>
+            <article>
+              <span>Repair area</span>
+              <strong>{{ engineering_recommendation.estimated_repair_area_sqm }} sqm</strong>
+            </article>
+            <article>
+              <span>Estimated depth</span>
+              <strong>{{ engineering_recommendation.estimated_depth_mm }} mm</strong>
+            </article>
+            <article>
+              <span>Volume</span>
+              <strong>{{ engineering_recommendation.estimated_material_volume_cum }} cu.m</strong>
+            </article>
+            <article>
+              <span>Recommended action</span>
+              <strong>{{ engineering_recommendation.recommended_action }}</strong>
+            </article>
+            <article>
+              <span>Repair method</span>
+              <strong>{{ engineering_recommendation.repair_method }}</strong>
+            </article>
+            <article>
+              <span>Response window</span>
+              <strong>{{ engineering_recommendation.response_window }}</strong>
+            </article>
+            <article>
+              <span>Crew</span>
+              <strong>{{ engineering_recommendation.crew_type }}</strong>
+            </article>
+            <article>
+              <span>Average confidence</span>
+              <strong>{{ engineering_recommendation.average_confidence }}%</strong>
+            </article>
+          </div>
+          <h3 class="engineering-section-title">Severity classification</h3>
+          <div class="severity-depth-grid">
+            <span>Low</span><strong>&lt;25 mm</strong>
+            <span>Medium</span><strong>25-50 mm</strong>
+            <span>High</span><strong>&gt;50 mm</strong>
+            <span>Detected class</span><strong>{{ engineering_recommendation.priority }} / {{ engineering_recommendation.estimated_depth_mm }} mm estimate</strong>
+          </div>
+          <h3 class="engineering-section-title">GPS location</h3>
+          <div class="engineering-grid">
+            <article>
+              <span>Latitude</span>
+              <strong>{% if engineering_recommendation.latitude %}{{ engineering_recommendation.latitude }}{% else %}Field capture required{% endif %}</strong>
+            </article>
+            <article>
+              <span>Longitude</span>
+              <strong>{% if engineering_recommendation.longitude %}{{ engineering_recommendation.longitude }}{% else %}Field capture required{% endif %}</strong>
+            </article>
+            <article>
+              <span>Road name</span>
+              <strong>{{ engineering_recommendation.road_name|default:"Field capture required" }}</strong>
+            </article>
+            <article>
+              <span>Chainage / station</span>
+              <strong>{{ engineering_recommendation.chainage_station|default:"Field capture required" }}</strong>
+            </article>
+            <article>
+              <span>Route start</span>
+              <strong>{{ analysis.route_start|default:"Field capture required" }}</strong>
+            </article>
+            <article>
+              <span>Route end</span>
+              <strong>{{ analysis.route_end|default:"Field capture required" }}</strong>
+            </article>
+          </div>
+          <h3 class="engineering-section-title">Photo documentation</h3>
+          <div class="engineering-grid">
+            <article>
+              <span>Before repair</span>
+              <strong>{{ engineering_recommendation.photo_before_count }} analysis snapshots</strong>
+            </article>
+            <article>
+              <span>During repair</span>
+              <strong>{% if engineering_recommendation.photo_during_count %}{{ engineering_recommendation.photo_during_count }} photos{% else %}Pending field upload{% endif %}</strong>
+            </article>
+            <article>
+              <span>After repair</span>
+              <strong>{% if engineering_recommendation.photo_after_count %}{{ engineering_recommendation.photo_after_count }} photos{% else %}Pending field upload{% endif %}</strong>
+            </article>
+          </div>
+          <h3 class="engineering-section-title">Traffic and weather</h3>
+          <div class="engineering-grid">
+            <article>
+              <span>Lanes affected</span>
+              <strong>{{ engineering_recommendation.lanes_affected }}</strong>
+            </article>
+            <article>
+              <span>Traffic volume</span>
+              <strong>{{ engineering_recommendation.traffic_volume_note }}</strong>
+            </article>
+            <article>
+              <span>Work zone</span>
+              <strong>{{ engineering_recommendation.work_zone_requirements }}</strong>
+            </article>
+            <article>
+              <span>Weather</span>
+              <strong>{{ engineering_recommendation.weather_constraints }}</strong>
+            </article>
+            <article>
+              <span>Pavement temperature</span>
+              <strong>{{ engineering_recommendation.pavement_temperature_note }}</strong>
+            </article>
+          </div>
+          <p class="engineering-notes">{{ engineering_recommendation.engineering_notes }}</p>
+        {% else %}
+          <p class="muted">Run assessment to generate repair recommendations and engineering estimates.</p>
+        {% endif %}
+      </section>
+
+      <div class="confidence-row">
+        <span>Min confidence</span>
+        <input id="confidence-preview" type="range" min="50" max="99" value="{{ form.min_confidence.value|default:85 }}">
+        <strong id="confidence-preview-output">{{ form.min_confidence.value|default:85 }}%</strong>
+      </div>
+    </section>
+
+  </div>
+</section>
+{{ detections_json|json_script:"detection-events" }}
+{% endblock %}

@@ -1,0 +1,11 @@
+{% extends "console/base.html" %}
+{% block body %}
+<main class="auth-shell">
+  <section class="auth-card">
+    <span class="hud-label">Access pending</span>
+    <h1>Viewer role assigned</h1>
+    <p class="muted">An admin must promote this account to engineer or admin before console access is available.</p>
+    <a href="{% url 'logout' %}" class="primary-link">Sign out</a>
+  </section>
+</main>
+{% endblock %}

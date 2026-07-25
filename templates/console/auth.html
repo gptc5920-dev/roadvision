@@ -1,0 +1,41 @@
+{% extends "console/base.html" %}
+{% load static %}
+{% block title %}RoadVision Login{% endblock %}
+{% block body %}
+<main class="auth-shell">
+  <section class="auth-card">
+
+    <div class="segmented">
+      <a class="active" href="{% url 'auth' %}">Sign in</a>
+    </div>
+
+    <form method="post" class="auth-form">
+      {% csrf_token %}
+      {% if form.non_field_errors %}
+        <div class="error-banner">{{ form.non_field_errors|join:", " }}</div>
+      {% endif %}
+      <label>Email
+        <input type="email" name="email" value="{{ form.email.value|default:'' }}" required>
+        {{ form.email.errors }}
+      </label>
+      <div class="password-field">
+        <label for="sign-in-password">Password</label>
+        <span class="password-input-wrap">
+          <input id="sign-in-password" type="password" name="password" minlength="6" autocomplete="current-password" required>
+          <button
+            class="password-toggle"
+            type="button"
+            aria-controls="sign-in-password"
+            aria-label="Show password"
+            aria-pressed="false"
+            title="Show password"
+          ><span class="password-toggle-icon" aria-hidden="true"></span></button>
+        </span>
+        {{ form.password.errors }}
+      </div>
+      <button class="primary-button">Enter console</button>
+    </form>
+  </section>
+</main>
+<script src="{% static 'console/auth.js' %}?v=20260717-1" defer></script>
+{% endblock %}

@@ -1,0 +1,391 @@
+{% extends "console/admin_base.html" %}
+{% block title %}Video Analyzer{% endblock %}
+{% block admin_content %}
+<section class="workspace-page visualizer-page">
+  <div class="module-heading">
+    <div>
+      {% comment %} <span class="hud-label">YOLO11 video detection</span> {% endcomment %}
+      <h1>Video Analyzer</h1>
+      <p>Detect, track, review, export, and feed confirmed video potholes back into the training dataset.</p>
+    </div>
+    {% if analysis %}
+      <div class="module-heading-actions">
+        <a class="primary-mini module-action" href="{% url 'admin_video_visualizer_report' analysis.pk %}">Inspection report</a>
+        <a class="primary-mini module-action" href="{% url 'admin_detections' %}?analysis={{ analysis.pk }}">Defect Inventory</a>
+        {% if analysis.status == "complete" %}
+          <form method="post" class="inline-form restart-analysis-form" data-analysis-label="{{ analysis.original_filename }}">
+            {% csrf_token %}<input type="hidden" name="action" value="restart_analysis"><input type="hidden" name="analysis_id" value="{{ analysis.pk }}">
+            <button type="submit" class="restart-analysis-button">{% if analysis.is_continuous %}Restart continuous detection{% else %}Restart pothole analysis{% endif %}</button>
+          </form>
+        {% elif analysis.status == "failed" or analysis.status == "cancelled" %}
+          <form method="post" class="inline-form">
+            {% csrf_token %}<input type="hidden" name="action" value="retry_analysis"><input type="hidden" name="analysis_id" value="{{ analysis.pk }}">
+            <button type="submit">Retry analysis</button>
+          </form>
+        {% elif analysis.is_continuous %}
+          <form method="post" class="inline-form">
+            {% csrf_token %}<input type="hidden" name="action" value="stop_continuous_analysis"><input type="hidden" name="analysis_id" value="{{ analysis.pk }}">
+            <button type="submit">{% if analysis.stop_requested %}Stopping live detection...{% else %}Stop live detection{% endif %}</button>
+          </form>
+        {% elif analysis.status == "queued" or analysis.status == "retrying" or analysis.status == "running" %}
+          <form method="post" class="inline-form">
+            {% csrf_token %}<input type="hidden" name="action" value="cancel_analysis"><input type="hidden" name="analysis_id" value="{{ analysis.pk }}">
+            <button type="submit">Cancel analysis</button>
+          </form>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="visualizer-shell">
+    <main class="visualizer-main">
+      {% if analysis.model_session.model_task == "detect" %}
+        <section class="detection-guidance" role="status">
+          <div>
+            <strong>Standard object-detection mode</strong>
+            <span>
+              This model provides boxes, confidence scores, and tracked defects.
+              {% if detection_mask_refinement %}
+                {% if has_estimated_masks %}Orange foreground masks are estimated from each box and are not model segmentation.{% else %}New or reanalyzed results can add orange, visual-only estimated masks.{% endif %}
+              {% else %}Install a segmentation model to add masks and mask-derived measurements.{% endif %}
+            </span>
+          </div>
+          {% if detection_mask_refinement and analysis.status == "complete" and analysis.total_detections and not has_estimated_masks %}
+            <form method="post" class="inline-form">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="reanalyze_with_estimated_masks">
+              <input type="hidden" name="analysis_id" value="{{ analysis.pk }}">
+              <button type="submit">Generate estimated masks</button>
+            </form>
+          {% endif %}
+        </section>
+      {% endif %}
+      <section class="analysis-summary-panel" aria-label="Video analysis summary">
+        <div class="defect-composition">
+          <div class="defect-composition-head">
+            <div>
+              <span>Tracked defects</span>
+              <strong data-live-metric="total">{{ analysis.total_unique_potholes|default:0|add:road_damage_count }} total</strong>
+            </div>
+            <span class="status-badge {{ analysis.status|default:'waiting' }}">{{ analysis.status|default:"waiting" }}</span>
+          </div>
+          <div
+            class="defect-composition-bar"
+            role="img"
+            aria-label="Defect composition: {{ analysis.total_unique_potholes|default:0 }} potholes and {{ road_damage_count|default:0 }} road damage tracks"
+          >
+            <span class="defect-segment potholes" style="--segment-value: {{ analysis.total_unique_potholes|default:0 }}" aria-hidden="true"></span>
+            <span class="defect-segment road-damage" style="--segment-value: {{ road_damage_count|default:0 }}" aria-hidden="true"></span>
+          </div>
+          <div class="defect-composition-labels" aria-hidden="true">
+            <span><i class="potholes"></i>Potholes <strong data-live-metric="unique">{{ analysis.total_unique_potholes|default:0 }}</strong></span>
+            <span><i class="road-damage"></i>Road damage <strong data-live-metric="road-damage">{{ road_damage_count|default:0 }}</strong></span>
+          </div>
+        </div>
+
+        <dl class="analysis-compact-metrics">
+          <div><dt>Total detections</dt><dd data-live-metric="detections">{{ analysis.total_detections|default:0 }}</dd></div>
+          <div><dt>Average confidence</dt><dd data-live-metric="confidence">{% if analysis.average_confidence %}{{ analysis.average_confidence }}{% else %}--{% endif %}</dd></div>
+          <div><dt>Frames processed</dt><dd data-live-metric="frames">{{ analysis.frames_processed|default:0 }}</dd></div>
+          <div><dt>Processing FPS</dt><dd data-live-metric="processing-fps">{{ analysis.average_processing_fps|default:0 }}</dd></div>
+          <div><dt>Source FPS</dt><dd data-live-metric="source-fps">{{ analysis.source_processing_fps|default:0 }}</dd></div>
+          <div><dt>Real-time factor</dt><dd><span data-live-metric="realtime-factor">{{ analysis.realtime_factor|default:0 }}</span>x</dd></div>
+        </dl>
+      </section>
+
+      {% if analysis.status == "running" and analysis.total_detections == 0 %}
+        <section class="detection-guidance is-processing" role="status">
+          <div>
+            <strong>{% if analysis.is_continuous %}Continuous detection is active{% else %}Analysis is still in progress{% endif %}</strong>
+            <span>{% if analysis.is_continuous %}Frame {{ analysis.current_frame }} has been reached with no detections above {{ analysis.confidence_threshold }}% yet. The stream keeps running until you stop it.{% else %}Frame {{ analysis.current_frame }} of {{ analysis.frame_count }} has been reached with no detections above {{ analysis.confidence_threshold }}% yet. Results are not final until processing completes.{% endif %}</span>
+          </div>
+        </section>
+      {% elif analysis.status == "complete" and analysis.total_detections == 0 %}
+        <section class="detection-guidance" role="status">
+          <div>
+            <strong>No potholes passed the {{ analysis.confidence_threshold }}% confidence threshold</strong>
+            <span>Try higher sensitivity for small, distant, unusual, or repaired road defects. Lower-confidence results require manual false-positive review.</span>
+          </div>
+          <form method="post" class="inline-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="reanalyze_with_sensitivity">
+            <input type="hidden" name="analysis_id" value="{{ analysis.pk }}">
+            <label>Sensitivity
+              <select name="confidence_threshold">
+                <option value="35">High - 35%</option>
+                <option value="25">Very high - 25%</option>
+              </select>
+            </label>
+            <button type="submit">Reanalyze video</button>
+          </form>
+        </section>
+      {% endif %}
+
+      <section class="video-visualizer-panel">
+        {% if analysis %}
+          <div
+            class="video-stage{% if analysis.is_continuous %} is-live-analysis{% endif %}"
+            id="visualizer-stage"
+            data-video-fps="{{ analysis.fps }}"
+            data-analysis-status="{{ analysis.status }}"
+            data-continuous="{% if analysis.is_continuous %}true{% else %}false{% endif %}"
+            data-status-url="{% url 'admin_video_visualizer_status' analysis.pk %}"
+          >
+            {% if analysis.is_continuous %}
+              <img
+                id="continuous-live-preview"
+                class="continuous-live-preview"
+                {% if analysis.live_preview_frame %}src="{{ analysis.live_preview_frame.url }}"{% else %}hidden{% endif %}
+                alt="Live annotated pothole detection from {{ analysis.original_filename }}"
+              >
+              <div class="continuous-live-wait" id="continuous-live-wait" {% if analysis.live_preview_frame %}hidden{% endif %}>
+                Connecting to the camera and waiting for the first analyzed frame...
+              </div>
+              <div class="continuous-live-badge{% if analysis.status == 'complete' or analysis.status == 'cancelled' or analysis.status == 'failed' %} is-ended{% endif %}" aria-label="Continuous live analysis">
+                {% if analysis.status == "complete" or analysis.status == "cancelled" or analysis.status == "failed" %}SESSION ENDED{% else %}LIVE DETECTION{% endif %}
+              </div>
+              <div class="video-processing-notice" id="continuous-live-status" aria-live="polite">
+                {% if analysis.stop_requested %}Stopping safely and finalizing snapshots...{% elif analysis.error_message %}{{ analysis.error_message }}{% elif analysis.status == "complete" %}Continuous detection stopped. The final annotated frame and snapshots are retained.{% else %}Continuous detection is active until an operator stops it.{% endif %}
+              </div>
+            {% elif analysis.video or analysis.processed_video %}
+              <video
+                id="visualizer-video"
+                controls
+                preload="auto"
+                playsinline
+              >
+                <source
+                  src="{% if analysis.video %}{{ analysis.video.url }}{% else %}{{ analysis.processed_video.url }}{% endif %}"
+                  type="{% if analysis.video and analysis.file_type == 'webm' %}video/webm{% else %}video/mp4{% endif %}"
+                >
+                Your browser could not play this video. Use the download link below.
+              </video>
+              <div class="video-media-status" id="video-media-status" hidden>
+                The video could not be loaded in this browser. Use Download video to open the source file.
+              </div>
+              <a class="video-download-link" href="{% if analysis.video %}{{ analysis.video.url }}{% else %}{{ analysis.processed_video.url }}{% endif %}" download>
+                Download video
+              </a>
+              <div class="video-overlay-layer" id="video-overlay-layer"></div>
+              {% if analysis.status == "queued" or analysis.status == "retrying" or analysis.status == "running" %}
+                <div class="video-processing-notice">
+                  {% if analysis.status == "running" %}
+                    {% if analysis.model_session.model_task == "detect" %}Processing detections{% else %}Processing masks{% endif %}: frame {{ analysis.current_frame }} of {{ analysis.frame_count }}
+                  {% else %}
+                    Analysis {{ analysis.status }} — raw video preview is available
+                  {% endif %}
+                </div>
+              {% endif %}
+            {% else %}
+              <div class="visualizer-empty">
+                {% if analysis.status == "queued" or analysis.status == "retrying" %}
+                  Analysis queued. The page will update automatically when processing starts.
+                {% elif analysis.status == "running" %}
+                  {% if analysis.model_session.model_task == "detect" %}Detecting and tracking road defects{% else %}Detecting potholes and generating masks{% endif %}: frame {{ analysis.current_frame }} of {{ analysis.frame_count }}.
+                {% elif analysis.status == "failed" %}
+                  Analysis failed: {{ analysis.error_message }}
+                {% else %}
+                  No analyzed video is available yet.
+                {% endif %}
+              </div>
+            {% endif %}
+            <div class="video-hud">
+              <span id="hud-total">Potholes <span data-live-metric="unique">{{ analysis.total_unique_potholes }}</span></span>
+              <span id="hud-frame">Frame <span data-live-metric="current-frame">{% if analysis.is_continuous %}{{ analysis.current_frame }}{% else %}0{% endif %}</span></span>
+              <span id="hud-time">0.00s</span>
+              <span id="hud-fps"><span data-live-metric="processing-fps">{{ analysis.average_processing_fps }}</span> FPS</span>
+              <span id="hud-threshold">Conf {{ analysis.confidence_threshold }}%</span>
+              <span>{{ analysis.road_section|default:"Road section pending" }}</span>
+            </div>
+          </div>
+
+          {% if not analysis.is_continuous %}<div class="visualizer-controls">
+            <button type="button" id="viz-play">Play</button>
+            <button type="button" id="viz-stop">Stop</button>
+            <button type="button" id="viz-prev-frame">Prev frame</button>
+            <button type="button" id="viz-next-frame">Next frame</button>
+            <label>Speed
+              <select id="viz-speed">
+                <option value="0.1">0.1x</option>
+                <option value="0.25">0.25x</option>
+                <option value="0.5">0.5x</option>
+                <option value="1" selected>1x</option>
+                <option value="1.5">1.5x</option>
+                <option value="2">2x</option>
+              </select>
+            </label>
+            <label>Confidence <input id="viz-conf-filter" type="range" min="1" max="99" value="{{ analysis.confidence_threshold }}"></label>
+            <label>IoU <input id="viz-iou-filter" type="range" min="1" max="99" value="{{ analysis.iou_threshold }}"></label>
+            <label><input id="viz-toggle-labels" type="checkbox" {% if analysis.show_labels %}checked{% endif %}> Labels</label>
+            <label><input id="viz-toggle-confidence" type="checkbox" {% if analysis.show_confidence %}checked{% endif %}> Scores</label>
+            <label><input id="viz-toggle-trackids" type="checkbox" {% if analysis.show_tracking_ids %}checked{% endif %}> IDs</label>
+            <label>
+              <input id="viz-toggle-masks" type="checkbox" {% if analysis.model_session.model_task == "detect" and not detection_mask_refinement %}disabled{% else %}checked{% endif %}>
+              {% if analysis.model_session.model_task == "detect" %}{% if detection_mask_refinement %}Estimated masks{% else %}Masks unavailable{% endif %}{% else %}Masks{% endif %}
+            </label>
+            <label><input id="viz-toggle-boxes" type="checkbox" {% if analysis.show_boxes %}checked{% endif %}> Boxes</label>
+            <label><input id="viz-toggle-gps" type="checkbox" {% if analysis.show_gps_overlay %}checked{% endif %}> GPS</label>
+            <button type="button" id="viz-fullscreen">Full screen</button>
+          </div>{% endif %}
+
+          {% if not analysis.is_continuous %}<div class="timeline-panel">
+            <div class="timeline-heading">
+              <span><strong>Keyframes</strong> · {{ timeline_markers|length }} tracked defects</span>
+              <output id="timeline-readout" for="video-timeline-scrubber" aria-live="polite">0:00 / --:--</output>
+            </div>
+            <div
+              class="video-timeline"
+              id="video-timeline"
+              data-duration="{{ analysis.duration_seconds|default:0 }}"
+              role="group"
+              aria-label="Video keyframe timeline"
+            >
+              <div class="timeline-rail" aria-hidden="true">
+                <span class="timeline-progress" id="timeline-progress"></span>
+              </div>
+              <label class="visually-hidden" for="video-timeline-scrubber">Seek through video</label>
+              <input
+                class="timeline-scrubber"
+                id="video-timeline-scrubber"
+                type="range"
+                min="0"
+                max="{{ analysis.duration_seconds|default:0 }}"
+                value="0"
+                step="0.01"
+              >
+              <div class="timeline-marker-layer">
+                {% for marker in timeline_markers %}
+                  <button
+                    type="button"
+                    class="video-marker {{ marker.status }} {{ marker.label }}"
+                    style="--marker-percent: {{ marker.percent }}%;"
+                    data-marker-time="{{ marker.timestamp }}"
+                    data-marker-track="{{ marker.track_id }}"
+                    data-marker-label="{{ marker.label }}"
+                    data-marker-status="{{ marker.status }}"
+                    data-marker-severity="{{ marker.severity }}"
+                    aria-label="{% if marker.label == 'road_damage' %}Road damage{% else %}Pothole{% endif %} P{{ marker.track_id }}, {{ marker.status }}, {{ marker.severity }}, at {{ marker.timestamp }} seconds"
+                    title="{% if marker.label == 'road_damage' %}Road damage{% else %}Pothole{% endif %} P{{ marker.track_id }} · {{ marker.status }} · {{ marker.severity }} · {{ marker.timestamp }}s"
+                  ><span aria-hidden="true"></span></button>
+                {% endfor %}
+              </div>
+            </div>
+            <div class="timeline-legend" aria-label="Keyframe legend">
+              <span><i class="unresolved"></i>Unresolved</span>
+              <span><i class="confirmed"></i>Confirmed</span>
+              <span><i class="rejected"></i>Rejected</span>
+              <span><i class="road-damage"></i>Road damage</span>
+              <span class="timeline-keyboard-hint">Tab to a keyframe; arrow keys move between keyframes.</span>
+            </div>
+          </div>{% endif %}
+        {% else %}
+          <div class="visualizer-empty">
+            Upload a video and select a completed YOLO11 model to start detection.
+          </div>
+        {% endif %}
+      </section>
+
+      {% if analysis %}
+        <section class="workspace-panel">
+          <h2>Pothole Snapshots</h2>
+          <div class="snapshot-gallery">
+            {% for track in tracks %}
+              <article class="snapshot-card">
+                {% if track.snapshot_crop %}
+                  <a
+                    class="snapshot-preview-link"
+                    href="{% if track.snapshot_frame %}{{ track.snapshot_frame.url }}{% else %}{{ track.snapshot_crop.url }}{% endif %}"
+                    target="_blank"
+                    rel="noopener"
+                    aria-label="View {{ track.label|lower }} P{{ track.track_id }} in full size"
+                    title="View {{ track.label|lower }} P{{ track.track_id }}"
+                  >
+                    <img src="{{ track.snapshot_crop.url }}" alt="{{ track.label }} crop P{{ track.track_id }}">
+                    <span class="snapshot-preview-hint" aria-hidden="true">View pothole</span>
+                  </a>
+                {% endif %}
+                <strong>P{{ track.track_id }} - {{ track.label }} - {{ track.severity }}</strong>
+                <span>Best frame {{ track.best_frame }} - {{ track.highest_confidence }} confidence</span>
+                {% if track.snapshot_frame %}
+                  <a class="panel-link" href="{{ track.snapshot_frame.url }}" download>Download frame</a>
+                {% endif %}
+              </article>
+            {% empty %}
+              <p class="muted">Snapshots are generated during processing.</p>
+            {% endfor %}
+          </div>
+        </section>
+      {% endif %}
+    </main>
+
+    <aside class="visualizer-side">
+      <details class="workspace-panel" open>
+        <summary>Upload and Analyze</summary>
+        <p class="muted">Upload survey footage here. Model and processing defaults are managed in <a href="{% url 'admin_settings' %}">Settings</a>.</p>
+        <form method="post" enctype="multipart/form-data" class="module-form visualizer-upload-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="upload_video">
+          <label>Video file {{ upload_form.video }}</label>
+          <label>Source type {{ upload_form.source_type }}</label>
+          <label>Live stream URL {{ upload_form.stream_url }}</label>
+          <label>Detection sensitivity
+            {{ upload_form.confidence_threshold }}
+            <small>{{ upload_form.confidence_threshold.help_text }}</small>
+          </label>
+          <div class="webcam-recorder">
+            <video id="webcam-preview" playsinline muted hidden></video>
+            <div>
+              <button type="button" id="webcam-start">Start webcam</button>
+              <button type="button" id="webcam-record" disabled>Record</button>
+              <button type="button" id="webcam-stop" disabled>Stop</button>
+            </div>
+            <span id="webcam-status">Webcam recordings are saved as WEBM for analysis.</span>
+          </div>
+          <label>GPS file {{ upload_form.gps_file }}</label>
+          <label>Road section {{ upload_form.road_section }}</label>
+          <label>Station / chainage {{ upload_form.chainage_station }}</label>
+          {% if active_model.model_task == "segment" %}
+            <label>Road-plane calibration (meters/pixel) {{ upload_form.calibration_m_per_pixel }}</label>
+            <label>Calibration notes {{ upload_form.calibration_notes }}</label>
+          {% else %}
+            <p class="muted">Road-plane calibration and mask-derived dimensions become available with a segmentation model.</p>
+          {% endif %}
+          <button type="submit">Upload and start pothole analysis</button>
+        </form>
+      </details>
+
+      {% if analysis %}<section class="workspace-panel">
+        <h2>Accuracy Ground Truth</h2>
+        <p class="muted">After an independent frame-by-frame review, save the true number of distinct potholes. Review every pothole track as confirmed or rejected before running model evaluation.</p>
+        <form method="post" class="module-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="set_ground_truth">
+          <input type="hidden" name="analysis_id" value="{{ analysis.pk }}">
+          <label>True distinct potholes {{ ground_truth_form.ground_truth_pothole_count }}</label>
+          <label>Review notes {{ ground_truth_form.ground_truth_notes }}</label>
+          <button type="submit">Save ground truth</button>
+        </form>
+        {% if analysis.ground_truth_pothole_count != None %}
+          <p class="muted">Saved truth: {{ analysis.ground_truth_pothole_count }} potholes.</p>
+        {% endif %}
+      </section>{% endif %}
+
+      <section class="workspace-panel">
+        <h2>Video Queue</h2>
+        <div class="compact-list">
+          {% for item in analyses %}
+            <a class="module-row {% if analysis and analysis.pk == item.pk %}is-active{% endif %}" href="?analysis={{ item.pk }}">
+              <strong>{{ item.original_filename }}</strong>
+              <span>{{ item.status }} - {{ item.total_unique_potholes }} unique potholes - attempt {{ item.attempt_count }}/{{ item.max_attempts }}</span>
+              <span>{{ item.created_at|date:"M d, H:i" }}</span>
+            </a>
+          {% empty %}
+            <p class="muted">Queued and processed videos will appear here.</p>
+          {% endfor %}
+        </div>
+      </section>
+    </aside>
+  </div>
+</section>
+{{ frame_detections|json_script:"video-frame-detections" }}
+{% endblock %}

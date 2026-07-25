@@ -1,0 +1,35 @@
+{% extends "console/base.html" %}
+{% block body %}
+<main class="landing-shell">
+  <nav class="top-nav">
+    <a href="{% url 'home' %}" class="brand-mark"><span class="brand-pulse"></span>RoadVision</a>
+    <div class="nav-links">
+      <a href="#coverage">Coverage</a>
+      <a href="#model">Detection Model</a>
+      <a href="{% url 'auth' %}" class="nav-login">Engineer Login</a>
+    </div>
+  </nav>
+
+  <section class="hero-grid">
+    <div class="hero-copy">
+      <span class="hud-label">DPWH roadway intelligence</span>
+      <h1>RoadVision</h1>
+      <p>Real-time pothole detection, fleet telemetry, and road repair triage for engineering teams coordinating safer national and city corridors.</p>
+      <a href="{% url 'auth' %}" class="primary-link">Engineer Login <span>-></span></a>
+    </div>
+    <div class="hud-panel hero-panel">
+      <div class="scan-map">
+        <span class="scan-dot dot-a"></span>
+        <span class="scan-dot dot-b"></span>
+        <span class="scan-dot dot-c"></span>
+        <span class="scan-line"></span>
+      </div>
+      <div class="hero-metrics">
+        <div>28.4 FPS</div>
+        <div>4 active cities</div>
+        <div>Admin console ready</div>
+      </div>
+    </div>
+  </section>
+</main>
+{% endblock %}

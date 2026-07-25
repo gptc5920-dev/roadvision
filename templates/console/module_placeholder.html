@@ -1,0 +1,713 @@
+{% extends "console/admin_base.html" %}
+{% load console_extras %}
+{% block title %}{{ module_title }}{% endblock %}
+{% block extra_head %}
+  {% if module == "live-map" %}
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  {% endif %}
+{% endblock %}
+{% block admin_content %}
+<section class="workspace-page{% if module == 'overview' %} dashboard-page{% endif %}">
+  {% if module == "overview" %}
+    <header class="dashboard-hero">
+      <div class="dashboard-hero-copy">
+        <span class="dashboard-kicker"><i aria-hidden="true"></i> Live operations</span>
+        <h1>Dashboard</h1>
+        <p>Monitor road reports, fleet availability, and urgent maintenance activity across the DPWH network.</p>
+      </div>
+      <div class="dashboard-hero-actions">
+        <span class="dashboard-network-status">
+          <small>Fleet network</small>
+          <strong>{{ online_count }} of {{ devices|length }} cameras online</strong>
+        </span>
+        <a class="dashboard-primary-action" href="{% url 'admin_video_analyzer_explicit' %}">
+          {% if latest_analysis %}Open latest analysis{% else %}Start video analysis{% endif %}
+          <span aria-hidden="true">&rarr;</span>
+        </a>
+      </div>
+    </header>
+  {% else %}
+    <div class="module-heading">
+      <div>
+        <span class="hud-label">RoadVision module</span>
+        <h1>{{ module_title }}</h1>
+        <p>{% if module == "settings" %}Manage console profile, active detection model, and Video Analyzer processing defaults.{% else %}Operate reports, devices, sources, and personnel from the DPWH console.{% endif %}</p>
+      </div>
+      {% if latest_analysis %}
+        <a class="primary-mini module-action" href="{% url 'admin_video_analyzer_explicit' %}">Open latest analysis</a>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if module == "overview" %}
+    <section class="metric-grid dashboard-metric-grid" aria-label="RoadVision performance summary">
+      <article class="metric-card dashboard-metric-card is-reports">
+        <div class="dashboard-metric-top">
+          <span class="dashboard-metric-icon" aria-hidden="true"><svg><use href="#icon-detections"></use></svg></span>
+          <span class="dashboard-metric-label">Total reports</span>
+        </div>
+        <strong>{{ report_count }}</strong>
+        <small>All logged road incidents</small>
+      </article>
+      <article class="metric-card dashboard-metric-card is-open">
+        <div class="dashboard-metric-top">
+          <span class="dashboard-metric-icon" aria-hidden="true"><svg><use href="#icon-dispatch"></use></svg></span>
+          <span class="dashboard-metric-label">Open reports</span>
+        </div>
+        <strong>{{ open_count }}</strong>
+        <small>Awaiting review or dispatch</small>
+      </article>
+      <article class="metric-card dashboard-metric-card is-critical">
+        <div class="dashboard-metric-top">
+          <span class="dashboard-metric-icon" aria-hidden="true"><svg><use href="#icon-detections"></use></svg></span>
+          <span class="dashboard-metric-label">Critical</span>
+        </div>
+        <strong>{{ critical_count }}</strong>
+        <small>High-priority road hazards</small>
+      </article>
+      <article class="metric-card dashboard-metric-card is-online">
+        <div class="dashboard-metric-top">
+          <span class="dashboard-metric-icon" aria-hidden="true"><svg><use href="#icon-camera"></use></svg></span>
+          <span class="dashboard-metric-label">Online cameras</span>
+        </div>
+        <strong>{{ online_count }}</strong>
+        <small>Active fleet video sources</small>
+      </article>
+    </section>
+
+    <nav class="dashboard-quick-actions" aria-label="Dashboard quick actions">
+      <a href="{% url 'admin_live_map' %}">
+        <span class="dashboard-quick-icon" aria-hidden="true"><svg><use href="#icon-map"></use></svg></span>
+        <span><strong>Open live map</strong><small>See incidents by location</small></span>
+        <b aria-hidden="true">&rarr;</b>
+      </a>
+      <a href="{% url 'admin_video_analyzer_explicit' %}">
+        <span class="dashboard-quick-icon" aria-hidden="true"><svg><use href="#icon-video"></use></svg></span>
+        <span><strong>Analyze survey video</strong><small>Detect and track road defects</small></span>
+        <b aria-hidden="true">&rarr;</b>
+      </a>
+      <a href="{% url 'admin_detections' %}">
+        <span class="dashboard-quick-icon" aria-hidden="true"><svg><use href="#icon-detections"></use></svg></span>
+        <span><strong>Review inventory</strong><small>Confirm and prioritize defects</small></span>
+        <b aria-hidden="true">&rarr;</b>
+      </a>
+    </nav>
+
+    <div class="dashboard-content-grid">
+      <section class="workspace-panel dashboard-panel">
+        <header class="dashboard-panel-head">
+          <div>
+            <span>Regional distribution</span>
+            <h2>City load</h2>
+          </div>
+          <a href="{% url 'admin_live_map' %}">Open map</a>
+        </header>
+        {% if city_counts %}
+        <div class="bar-list dashboard-city-list">
+          {% for city in city_counts %}
+            <div class="bar-row" data-search-text="{{ city.city }}">
+              <span>{{ city.city }}</span>
+              <div><b style="width: {% widthratio city.total report_count 100 %}%"></b></div>
+              <strong>{{ city.total }}</strong>
+            </div>
+          {% endfor %}
+        </div>
+        {% else %}
+          <div class="dashboard-empty-state">
+            <span class="dashboard-empty-mark" aria-hidden="true">0</span>
+            <strong>No city reports yet</strong>
+            <p>Incoming field and video reports will appear here by location.</p>
+            <a href="{% url 'admin_live_map' %}">Explore the live map</a>
+          </div>
+        {% endif %}
+      </section>
+      <section class="workspace-panel dashboard-panel">
+        <header class="dashboard-panel-head">
+          <div>
+            <span>Latest activity</span>
+            <h2>Recent reports</h2>
+          </div>
+          <a href="{% url 'admin_detections' %}">View inventory</a>
+        </header>
+        {% if reports %}
+        <div class="dashboard-report-list">
+          {% for report in reports|slice:":5" %}
+            <a class="dashboard-report-row" href="{% url 'admin_live_map' %}#report-{{ report.id }}" data-search-text="{{ report.city }} {{ report.device_id }} {{ report.severity }} {{ report.status }}">
+              <span class="dashboard-report-id">#{{ report.id }}</span>
+              <span class="dashboard-report-copy">
+                <strong>{{ report.city }}</strong>
+                <small>{{ report.device_id }} &middot; {{ report.detected_at|date:"M d, H:i" }}</small>
+              </span>
+              <span class="dashboard-report-badges">
+                <span class="severity-badge {{ report.severity }}">{{ report.severity }}</span>
+                <span class="status-badge {{ report.status }}">{{ report.status }}</span>
+              </span>
+              <b aria-hidden="true">&rarr;</b>
+            </a>
+          {% endfor %}
+        </div>
+        {% else %}
+          <div class="dashboard-empty-state">
+            <span class="dashboard-empty-mark" aria-hidden="true">0</span>
+            <strong>No recent reports</strong>
+            <p>New roadway findings will appear here as soon as they are submitted.</p>
+            <a href="{% url 'admin_video_analyzer_explicit' %}">Analyze survey footage</a>
+          </div>
+        {% endif %}
+      </section>
+    </div>
+
+  {% elif module == "live-map" %}
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <div class="live-map-grid">
+      <section class="ops-map-panel">
+        <div id="live-map-canvas" class="ops-map" aria-label="Live pothole report map"></div>
+      </section>
+      <aside class="workspace-panel">
+        <h2>Directions</h2>
+        <form class="map-directions" id="map-directions-form">
+          <label>From
+            <input id="route-start" name="route_start" placeholder="Address or lat,lng" autocomplete="off">
+          </label>
+          <label>To
+            <input id="route-end" name="route_end" placeholder="Select incident or enter address" autocomplete="off">
+          </label>
+          <div class="map-direction-actions">
+            <button type="button" id="use-current-location">Use location</button>
+            <button type="submit">Route</button>
+            <button type="button" id="clear-route">Clear</button>
+          </div>
+          <p class="map-route-status" id="route-status">Select an incident or enter a destination.</p>
+        </form>
+        <h2>Map Incidents</h2>
+        <div class="compact-list">
+          {% for report in reports %}
+            <div class="module-row map-report-row" id="report-{{ report.id }}" data-map-report-link="{{ report.id }}" data-search-text="{{ report.city }} {{ report.device_id }} {{ report.notes }}">
+              <strong>{{ report.city }} - {{ report.device_id }}</strong>
+              <span>{{ report.notes }}</span>
+              <div class="map-report-actions">
+                <span class="severity-badge {{ report.severity }}">{{ report.severity }}</span>
+                <button type="button" data-route-target="{{ report.id }}">Use for route</button>
+              </div>
+            </div>
+          {% empty %}
+            <p class="muted">No pothole reports are available for mapping.</p>
+          {% endfor %}
+        </div>
+      </aside>
+    </div>
+    {{ map_reports_json|json_script:"live-map-reports" }}
+
+  {% elif module == "detections" %}
+    <div class="metric-grid">
+      <article class="metric-card"><span>Video defects</span><strong>{{ defect_count }}</strong></article>
+      <article class="metric-card"><span>Unresolved</span><strong>{{ unresolved_defect_count }}</strong></article>
+      <article class="metric-card"><span>Confirmed</span><strong>{{ confirmed_defect_count }}</strong></article>
+      <article class="metric-card critical"><span>Critical</span><strong>{{ critical_defect_count }}</strong></article>
+    </div>
+    <section class="workspace-panel">
+      <div class="module-heading">
+        <div>
+          <span class="hud-label">Video analysis results</span>
+          <h2>Defect Inventory</h2>
+          <p>Review tracked potholes, update field information, and send useful frames back to training.</p>
+        </div>
+        <form method="get" class="inline-form">
+          <label>Source video
+            <select name="analysis" onchange="this.form.submit()">
+              <option value="">All completed analyses</option>
+              {% for item in defect_analyses %}
+                <option value="{{ item.pk }}" {% if selected_defect_analysis == item.pk|stringformat:"s" %}selected{% endif %}>
+                  A{{ item.pk }} — {{ item.original_filename }}
+                </option>
+              {% endfor %}
+            </select>
+          </label>
+          {% if selected_defect_analysis %}<a class="primary-mini" href="{% url 'admin_detections' %}">Clear filter</a>{% endif %}
+        </form>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Defect</th><th>Snapshot</th><th>Source</th><th>Detection</th><th>Severity</th>
+              <th>Measurement / GPS</th><th>Review</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for track in defect_tracks %}
+            <tr data-search-text="A{{ track.analysis_id }} P{{ track.track_id }} {{ track.analysis.original_filename }} {{ track.road_section }} {{ track.severity }} {{ track.review_status }} {{ track.remarks }}">
+              <td>
+                <strong>A{{ track.analysis_id }}-P{{ track.track_id }}</strong><br>
+                <span>{{ track.label }}</span><br>
+                <span class="status-badge {{ track.review_status }}">{{ track.review_status }}</span>
+              </td>
+              <td>
+                {% if track.snapshot_crop %}
+                  <a href="{% if track.snapshot_frame %}{{ track.snapshot_frame.url }}{% else %}{{ track.snapshot_crop.url }}{% endif %}" target="_blank">
+                    <img class="inventory-thumbnail" src="{{ track.snapshot_crop.url }}" alt="Defect A{{ track.analysis_id }}-P{{ track.track_id }}">
+                  </a>
+                {% else %}--{% endif %}
+              </td>
+              <td>
+                <strong>{{ track.analysis.original_filename }}</strong><br>
+                <span class="muted">{{ track.road_section|default:track.analysis.road_section|default:"Road section pending" }}</span><br>
+                <a class="panel-link" href="{% url 'admin_video_analyzer_explicit' %}?analysis={{ track.analysis_id }}&t={{ track.first_timestamp }}">Open video at {{ track.first_timestamp }}s</a>
+              </td>
+              <td>
+                {{ track.average_confidence }} average<br>
+                <span class="muted">{{ track.appearance_count }} appearances · {{ track.first_timestamp }}–{{ track.last_timestamp }}s</span>
+              </td>
+              <td><span class="severity-badge {{ track.severity }}">{{ track.severity }}</span></td>
+              <td>
+                {{ track.get_measurement_basis_display }}<br>
+                <span class="muted">
+                  {% if track.estimated_length_m %}{{ track.estimated_length_m }} × {{ track.estimated_width_m }} m{% else %}Dimensions unavailable{% endif %}<br>
+                  {% if track.latitude and track.longitude %}{{ track.latitude }}, {{ track.longitude }}{% else %}GPS unavailable{% endif %}
+                </span>
+              </td>
+              <td>
+                <form method="post" class="inventory-review-form">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="review_track">
+                  <input type="hidden" name="track_id" value="{{ track.pk }}">
+                  <select name="review_status">
+                    <option value="unresolved" {% if track.review_status == "unresolved" %}selected{% endif %}>Unresolved</option>
+                    <option value="confirmed" {% if track.review_status == "confirmed" %}selected{% endif %}>Confirmed</option>
+                    <option value="rejected" {% if track.review_status == "rejected" %}selected{% endif %}>Rejected</option>
+                  </select>
+                  <select name="severity">
+                    <option value="low" {% if track.severity == "low" %}selected{% endif %}>Low</option>
+                    <option value="moderate" {% if track.severity == "moderate" %}selected{% endif %}>Moderate</option>
+                    <option value="high" {% if track.severity == "high" %}selected{% endif %}>High</option>
+                    <option value="critical" {% if track.severity == "critical" %}selected{% endif %}>Critical</option>
+                  </select>
+                  <input name="latitude" placeholder="Latitude" value="{{ track.latitude|default:'' }}">
+                  <input name="longitude" placeholder="Longitude" value="{{ track.longitude|default:'' }}">
+                  <input name="road_section" placeholder="Road section" value="{{ track.road_section }}">
+                  <input name="measured_depth_mm" placeholder="Depth mm" value="{{ track.measured_depth_mm|default:'' }}">
+                  <input name="remarks" placeholder="Engineer remarks" value="{{ track.remarks }}">
+                  <button type="submit">Save review</button>
+                </form>
+              </td>
+              <td>
+                {% if track.label == "Pothole" %}
+                  <form method="post" class="inline-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="add_track_to_dataset">
+                    <input type="hidden" name="track_id" value="{{ track.pk }}">
+                    <button type="submit">Add &amp; draw mask</button>
+                  </form>
+                {% endif %}
+                <form method="post" class="inline-form archive-form">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="remove_track">
+                  <input type="hidden" name="track_id" value="{{ track.pk }}">
+                  <button type="submit">Remove false detection</button>
+                </form>
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="8">No completed video defects match this inventory view.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% if selected_defect_analysis %}
+      <section class="workspace-panel">
+        <h2>Merge Duplicate Defects</h2>
+        <form method="post" class="inline-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="merge_tracks">
+          <input type="hidden" name="analysis_id" value="{{ selected_defect_analysis }}">
+          <select name="primary_track_id">
+            {% for track in defect_tracks %}<option value="{{ track.track_id }}">Keep A{{ track.analysis_id }}-P{{ track.track_id }}</option>{% endfor %}
+          </select>
+          <select name="duplicate_track_id">
+            {% for track in defect_tracks %}<option value="{{ track.track_id }}">Merge A{{ track.analysis_id }}-P{{ track.track_id }}</option>{% endfor %}
+          </select>
+          <button type="submit">Merge duplicate</button>
+        </form>
+      </section>
+    {% endif %}
+
+    {% if reports %}
+      <section class="workspace-panel">
+        <h2>Legacy Field Reports</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>Location</th><th>Severity</th><th>Status</th><th>Device</th><th>Action</th></tr></thead>
+            <tbody>
+            {% for report in reports %}
+              <tr data-search-text="{{ report.city }} {{ report.device_id }} {{ report.severity }} {{ report.status }} {{ report.notes }}">
+                <td>#{{ report.id }}</td>
+                <td><strong>{{ report.city }}</strong><br><span class="muted">{{ report.notes }}</span></td>
+                <td><span class="severity-badge {{ report.severity }}">{{ report.severity }}</span></td>
+                <td><span class="status-badge {{ report.status }}">{{ report.status }}</span></td>
+                <td>{{ report.device_id }}</td>
+                <td>
+                  <form method="post" class="inline-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="update_report_status">
+                    <input type="hidden" name="report_id" value="{{ report.id }}">
+                    <select name="status">
+                      {% for value, label in statuses %}<option value="{{ value }}" {% if report.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+                    </select>
+                    <button type="submit">Save</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% endif %}
+
+  {% elif module == "dispatch" %}
+    <div class="workspace-grid">
+      {% for report in dispatch_reports %}
+        <article class="dispatch-card" data-search-text="{{ report.city }} {{ report.device_id }} {{ report.severity }} {{ report.notes }}">
+          <div>
+            <span class="severity-badge {{ report.severity }}">{{ report.severity }}</span>
+            <h2>#{{ report.id }} {{ report.city }}</h2>
+            <p>{{ report.notes }}</p>
+          </div>
+          <form method="post" class="inline-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="update_report_status">
+            <input type="hidden" name="report_id" value="{{ report.id }}">
+            <button name="status" value="in-progress" type="submit">Dispatch crew</button>
+            <button name="status" value="resolved" type="submit">Resolve</button>
+          </form>
+        </article>
+      {% empty %}
+        <section class="workspace-panel"><p class="muted">No dispatchable reports.</p></section>
+      {% endfor %}
+    </div>
+
+  {% elif module == "fleet-cams" %}
+    <section class="workspace-panel fleet-camera-intro">
+      <div class="module-heading">
+        <div>
+          <span class="hud-label">Fleet video intake</span>
+          <h2>Continuous fleet pothole detection</h2>
+          <p>Run registered RTSP/HTTP dashcams continuously with annotated live frames, automatic reconnection, and operator-controlled stopping. Browser cameras can still capture review clips.</p>
+        </div>
+        <a class="primary-mini module-action" href="{% url 'admin_video_analyzer_explicit' %}">Open Analyzer queue</a>
+      </div>
+    </section>
+
+    {% if is_admin %}
+      <details class="workspace-panel fleet-camera-setup">
+        <summary>Register or update a fleet camera</summary>
+        <p class="muted">Use a stable device ID. Private RTSP/HTTP cameras require <code>ALLOW_PRIVATE_STREAMS=true</code> on the trusted RoadVision server.</p>
+        <form method="post" class="module-form fleet-device-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="save_fleet_device">
+          <label>Device ID {{ fleet_device_form.device_id }}<small>{{ fleet_device_form.device_id.help_text }}</small></label>
+          <label>Camera name {{ fleet_device_form.name }}</label>
+          <label>City / municipality {{ fleet_device_form.city }}</label>
+          <label>Status {{ fleet_device_form.status }}</label>
+          <label class="fleet-form-wide">Stream URL {{ fleet_device_form.stream_url }}<small>{{ fleet_device_form.stream_url.help_text }}</small></label>
+          <label>Road section {{ fleet_device_form.road_section }}</label>
+          <label>Station / chainage {{ fleet_device_form.chainage_station }}</label>
+          <label>Expected FPS {{ fleet_device_form.fps }}</label>
+          <label>Camera/model label {{ fleet_device_form.model_version }}</label>
+          <button type="submit">Save fleet camera</button>
+        </form>
+      </details>
+    {% endif %}
+
+    <div class="device-grid fleet-camera-grid">
+      {% for device in devices %}
+        <article class="device-card fleet-camera-card" data-search-text="{{ device.id }} {{ device.name }} {{ device.city }} {{ device.status }} {{ device.road_section }} {{ device.chainage_station }}">
+          <div class="device-card-top">
+            <span>{{ device.id }}</span>
+            <span class="status-badge {{ device.status }}">{{ device.status }}</span>
+          </div>
+          <h3>{{ device.name }}</h3>
+          <p>{{ device.city }}{% if device.road_section %} · {{ device.road_section }}{% endif %}</p>
+          <dl>
+            <div><dt>Last seen</dt><dd>{{ device.last_seen_at|date:"M d, H:i" }}</dd></div>
+            <div><dt>FPS</dt><dd>{{ device.fps }}</dd></div>
+            <div><dt>Model</dt><dd>{{ device.model_version }}</dd></div>
+            <div><dt>Stream</dt><dd>{% if device.stream_url %}<span class="fleet-stream-ready">configured</span>{% else %}<span class="muted">not configured</span>{% endif %}</dd></div>
+            {% if device.chainage_station %}<div><dt>Station</dt><dd>{{ device.chainage_station }}</dd></div>{% endif %}
+          </dl>
+          <div class="fleet-camera-actions">
+            <section class="fleet-action-panel">
+              <h4>Continuous dashcam analysis</h4>
+              <p>Analyze this stream continuously in real-time mode. It reconnects automatically and runs until you stop it.</p>
+              {% if device.active_live_analysis %}
+                <div class="fleet-continuous-status" role="status">
+                  <span class="continuous-live-dot" aria-hidden="true"></span>
+                  <span><strong>Live detection {{ device.active_live_analysis.status }}</strong><small>Frame {{ device.active_live_analysis.current_frame }} · {{ device.active_live_analysis.total_unique_potholes }} potholes</small></span>
+                </div>
+                <a class="fleet-open-live" href="{% url 'admin_video_analyzer_explicit' %}?analysis={{ device.active_live_analysis.pk }}">Open live detection</a>
+                <form method="post" class="fleet-stream-form">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="stop_fleet_stream">
+                  <input type="hidden" name="device_id" value="{{ device.id }}">
+                  <input type="hidden" name="analysis_id" value="{{ device.active_live_analysis.pk }}">
+                  <button type="submit">{% if device.active_live_analysis.stop_requested %}Stopping safely...{% else %}Stop continuous detection{% endif %}</button>
+                </form>
+              {% else %}
+              <form method="post" class="fleet-stream-form">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="analyze_fleet_stream">
+                <input type="hidden" name="device_id" value="{{ device.id }}">
+                <label>Sensitivity
+                  <select name="confidence_threshold">
+                    <option value="50">Standard · 50%</option>
+                    <option value="35">High · 35%</option>
+                    <option value="25">Very high · 25%</option>
+                  </select>
+                </label>
+                <button
+                  type="submit"
+                  data-fleet-stream-select
+                  aria-label="Start continuous detection for {{ device.name }}"
+                  title="Select {{ device.name }} stream for continuous detection"
+                  {% if device.status != "online" or not device.stream_url %}disabled{% endif %}
+                >
+                  Start continuous detection
+                </button>
+              </form>
+              {% if not device.stream_url %}<small>Add a stream URL to enable this action.</small>{% elif device.status != "online" %}<small>Bring this camera online first.</small>{% endif %}
+              {% endif %}
+            </section>
+
+            <form method="post" enctype="multipart/form-data" class="fleet-action-panel fleet-capture-form" data-fleet-capture data-device-id="{{ device.id }}" data-device-name="{{ device.name }}">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="analyze_fleet_capture">
+              <input type="hidden" name="device_id" value="{{ device.id }}">
+              <input class="fleet-capture-file visually-hidden" type="file" name="video" accept="video/webm,video/mp4,video/quicktime" tabindex="-1">
+              <h4>Phone / device live camera</h4>
+              <p>Start a live preview from this phone, tablet, or laptop, choose the front or rear camera, then record a road clip for Analyzer.</p>
+              <label>Available camera
+                <select class="fleet-camera-source" aria-label="Available camera for {{ device.name }}" disabled>
+                  <option value="">Checking for cameras...</option>
+                </select>
+              </label>
+              <small>Camera names appear after browser permission is granted. Phone camera access requires HTTPS or localhost.</small>
+              <div class="fleet-live-preview">
+                <video class="fleet-capture-preview" muted playsinline hidden aria-label="{{ device.name }} live phone camera preview"></video>
+                <span class="fleet-live-indicator" hidden aria-hidden="true">LIVE PREVIEW</span>
+              </div>
+              <div class="fleet-capture-controls">
+                <button class="fleet-camera-start" type="button" {% if device.status != "online" %}disabled{% endif %}>Start phone camera live</button>
+                <button class="fleet-camera-record" type="button" disabled>Record clip</button>
+                <button class="fleet-camera-stop" type="button" disabled>End live</button>
+              </div>
+              <p class="fleet-capture-status" aria-live="polite">
+                {% if device.status == "online" %}Ready to start a live phone or device camera.{% else %}Bring this fleet entry online before starting the phone camera.{% endif %}
+              </p>
+              <label>Sensitivity
+                <select name="confidence_threshold">
+                  <option value="50">Standard · 50%</option>
+                  <option value="35">High · 35%</option>
+                  <option value="25">Very high · 25%</option>
+                </select>
+              </label>
+              <button class="fleet-camera-submit" type="submit" disabled>Send captured clip</button>
+            </form>
+          </div>
+
+          <form method="post" class="card-action fleet-status-action">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="toggle_device_status">
+            <input type="hidden" name="device_id" value="{{ device.id }}">
+            <button type="submit">{% if device.status == "online" %}Take camera offline{% else %}Bring camera online{% endif %}</button>
+          </form>
+        </article>
+      {% empty %}
+        <section class="workspace-panel fleet-empty-state">
+          <h2>No fleet cameras registered</h2>
+          <p class="muted">{% if is_admin %}Open “Register or update a fleet camera” above to add the first vehicle camera.{% else %}Ask an administrator to register a fleet camera before sending footage to Video Analyzer.{% endif %}</p>
+        </section>
+      {% endfor %}
+    </div>
+
+  {% elif module == "detection-sources" %}
+    <div class="workspace-grid two">
+      <section class="workspace-panel">
+        <h2>Dataset Sources</h2>
+        <div class="compact-list">
+          {% for sample in samples %}
+            <div class="source-row" data-search-text="{{ sample.name }} {{ sample.road_name }} {{ sample.city }} {{ sample.notes }}">
+              <div>
+                <strong>{{ sample.name }}</strong>
+                <span>{{ sample.road_name }} - {{ sample.city }} - {{ sample.duration_seconds }}s</span>
+              </div>
+              <form method="post" class="inline-form">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="analyze_sample">
+                <input type="hidden" name="sample_id" value="{{ sample.id }}">
+                <input type="hidden" name="min_confidence" value="85">
+                <button type="submit">Analyze</button>
+              </form>
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+      <section class="workspace-panel">
+        <h2>Add Source</h2>
+        <form method="post" class="module-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="add_sample">
+          <label>Name <input name="name" required></label>
+          <label>Road <input name="road_name" required></label>
+          <label>Barangay <input name="barangay"></label>
+          <label>City <input name="city" required></label>
+          <label>File name <input name="file_name" placeholder="dataset/sample.mp4"></label>
+          <label>Duration seconds <input name="duration_seconds" type="number" min="1" value="40"></label>
+          <label>Frame count <input name="frame_count" type="number" min="1" value="879"></label>
+          <label>FPS <input name="fps" type="number" min="1" step="0.01" value="59"></label>
+          <label>Notes <input name="notes"></label>
+          <button type="submit">Add source</button>
+        </form>
+      </section>
+    </div>
+
+  {% elif module == "personnel" %}
+    <div class="workspace-grid two personnel-layout">
+      <section class="workspace-panel">
+        <h2>Add Personnel Account</h2>
+        {% if is_admin %}
+          <p class="muted">Create an account and assign its initial console role. Share the temporary password through an approved secure channel.</p>
+          <form method="post" class="module-form personnel-account-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="create_personnel_account">
+            {% if personnel_account_form.non_field_errors %}
+              <div class="error-banner">{{ personnel_account_form.non_field_errors|join:", " }}</div>
+            {% endif %}
+            <label>Full name
+              {{ personnel_account_form.full_name }}
+              {{ personnel_account_form.full_name.errors }}
+            </label>
+            <label>Email address
+              {{ personnel_account_form.email }}
+              {{ personnel_account_form.email.errors }}
+            </label>
+            <label>Console role
+              {{ personnel_account_form.role }}
+              {{ personnel_account_form.role.errors }}
+            </label>
+            <label>Temporary password
+              {{ personnel_account_form.temporary_password }}
+              {{ personnel_account_form.temporary_password.errors }}
+              <small>{{ personnel_account_form.temporary_password.help_text }}</small>
+            </label>
+            <label>Confirm temporary password
+              {{ personnel_account_form.confirm_password }}
+              {{ personnel_account_form.confirm_password.errors }}
+            </label>
+            <button type="submit">Create personnel account</button>
+          </form>
+        {% else %}
+          <p class="muted">Only administrators can establish new personnel accounts.</p>
+        {% endif %}
+      </section>
+      <section class="workspace-panel personnel-guidance">
+        <h2>Role Access</h2>
+        <div class="compact-list">
+          <div class="module-row"><strong>Administrator</strong><span>Manages accounts, roles, models, and system settings.</span></div>
+          <div class="module-row"><strong>Engineer</strong><span>Runs analyses and reviews the defect inventory.</span></div>
+          <div class="module-row"><strong>Viewer</strong><span>Receives restricted read access pending role assignment.</span></div>
+        </div>
+      </section>
+    </div>
+    <section class="workspace-panel">
+      <h2>Personnel Access</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Email</th><th>Account</th><th>Current role</th><th>Action</th></tr></thead>
+          <tbody>
+          {% for console_user in users %}
+            <tr data-search-text="{{ console_user|profile_name }} {{ console_user.email }} {{ console_user|role_of }}">
+              <td>{{ console_user|profile_name }}</td>
+              <td>{{ console_user.email|default:console_user.username }}</td>
+              <td>{% if console_user.is_active %}<span class="status-badge approved">active</span>{% else %}<span class="status-badge rejected">disabled</span>{% endif %}</td>
+              <td><span class="role-chip">{{ console_user|role_of }}</span></td>
+              <td>
+                <form method="post" class="inline-form">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="update_role">
+                  <input type="hidden" name="user_id" value="{{ console_user.id }}">
+                  <select name="role" {% if not is_admin %}disabled{% endif %}>
+                    {% for value, label in roles %}<option value="{{ value }}" {% if console_user|role_of == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+                  </select>
+                  <button type="submit" {% if not is_admin %}disabled{% endif %}>Save</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  {% elif module == "settings" %}
+    <section class="workspace-panel">
+      <h2>Model and Analysis Settings</h2>
+      <p class="muted">These defaults apply to every new upload in Video Analyzer. Survey-specific video, GPS, road, and calibration details remain on the Analyzer upload page.</p>
+      <p><strong>Readiness:</strong> {% if model_readiness.ready %}active model ready{% else %}blocked{% endif %}</p>
+      {% for error in model_readiness.errors %}<p class="muted">{{ error }}</p>{% endfor %}
+      {% for warning in model_readiness.warnings %}<p class="muted">{{ warning }}</p>{% endfor %}
+      <form method="post" class="training-config-grid">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="update_analyzer_settings">
+        <label>Active validated pothole model {{ analyzer_settings_form.model_session }} {{ analyzer_settings_form.model_session.errors }}</label>
+        <label>Default training architecture
+          {{ analyzer_settings_form.training_model }}
+          <small>{{ analyzer_settings_form.training_model.help_text }}</small>
+        </label>
+        <label>Analysis mode {{ analyzer_settings_form.mode }}</label>
+        <label>Confidence threshold {{ analyzer_settings_form.confidence_threshold }}</label>
+        <label>IoU threshold {{ analyzer_settings_form.iou_threshold }}</label>
+        <label>Device / GPU {{ analyzer_settings_form.device }}</label>
+        <label>Input resolution {{ analyzer_settings_form.input_resolution }}</label>
+        <label>Frame skipping interval {{ analyzer_settings_form.frame_skip }}</label>
+        <label>Object tracker {{ analyzer_settings_form.tracker }}</label>
+        <label>Max detections per frame {{ analyzer_settings_form.max_detections }}</label>
+        <label>Maximum retry attempts {{ analyzer_settings_form.max_attempts }}</label>
+        <label>Minimum track appearances {{ analyzer_settings_form.min_track_appearances }}</label>
+        <label>Duplicate-track IoU {{ analyzer_settings_form.dedup_iou_threshold }}</label>
+        <label>Duplicate-track maximum gap (frames) {{ analyzer_settings_form.dedup_max_gap_frames }}</label>
+        <label class="check-row">{{ analyzer_settings_form.include_road_damage }} Include road-damage class</label>
+        <label class="check-row">{{ analyzer_settings_form.half_precision }} Half-precision inference</label>
+        <label class="check-row">{{ analyzer_settings_form.show_labels }} Show labels</label>
+        <label class="check-row">{{ analyzer_settings_form.show_confidence }} Show confidence scores</label>
+        <label class="check-row">{{ analyzer_settings_form.show_tracking_ids }} Show tracking IDs</label>
+        <label class="check-row">{{ analyzer_settings_form.show_boxes }} Show detection boxes</label>
+        <label class="check-row">{{ analyzer_settings_form.show_gps_overlay }} Show GPS overlay</label>
+        <button type="submit" {% if not is_admin %}disabled{% endif %}>Save Analyzer settings</button>
+      </form>
+      {% if not is_admin %}<p class="muted">Only administrators can change system analysis defaults.</p>{% endif %}
+    </section>
+    <div class="workspace-grid two">
+      <section class="workspace-panel">
+        <h2>Console Profile</h2>
+        <form method="post" class="module-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="update_profile">
+          <label>Full name <input name="full_name" value="{{ request.user|profile_name }}"></label>
+          <label>Email <input name="email" type="email" value="{{ request.user.email }}"></label>
+          <button type="submit">Save settings</button>
+        </form>
+      </section>
+      <section class="workspace-panel">
+        <h2>System Status</h2>
+        <div class="dataset-meta">
+          <span>Role</span><strong>{{ role }}</strong>
+          <span>Reports</span><strong>{{ report_count }}</strong>
+          <span>Avg FPS</span><strong>{{ avg_fps|floatformat:1 }}</strong>
+          <span>Sources</span><strong>{{ samples|length }}</strong>
+        </div>
+      </section>
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

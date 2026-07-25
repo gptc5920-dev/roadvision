@@ -1,0 +1,380 @@
+{% extends "console/admin_base.html" %}
+{% block title %}YOLO Training Dataset{% endblock %}
+{% block admin_content %}
+<section class="workspace-page dataset-page">
+  <div class="module-heading">
+    <div>
+      {% comment %} <span class="hud-label">YOLO11 and YOLO26 pothole training</span> {% endcomment %}
+      <h1>Automatic Model Training</h1>
+      <p>Upload road images. RoadVision labels them, balances the dataset splits, and queues training automatically when the dataset is ready.</p>
+    </div>
+  </div>
+
+  <nav class="dataset-tabs" aria-label="Automatic YOLO training workflow">
+    <a class="{% if tab == 'overview' %}active{% endif %}" href="?tab=overview">Dataset Overview</a>
+    <a class="{% if tab == 'upload' %}active{% endif %}" href="?tab=upload">Upload Images</a>
+    <a class="{% if tab == 'annotate' %}active{% endif %}" href="?tab=annotate">Draw Masks</a>
+    <a class="{% if tab == 'review' %}active{% endif %}" href="?tab=review">Review Labels</a>
+    <a class="{% if tab == 'train' %}active{% endif %}" href="?tab=train">Train</a>
+    <a class="{% if tab == 'test' %}active{% endif %}" href="?tab=test">Test</a>
+    <a class="{% if tab == 'history' %}active{% endif %}" href="?tab=history">Training History</a>
+  </nav>
+
+  {% if tab == "overview" %}
+    <div class="metric-grid dataset-summary-grid">
+      <article class="metric-card"><span>Total images</span><strong>{{ summary.total_images }}</strong></article>
+      <article class="metric-card"><span>Annotated</span><strong>{{ summary.annotated_images }}</strong></article>
+      <article class="metric-card"><span>Unannotated</span><strong>{{ summary.unannotated_images }}</strong></article>
+      <article class="metric-card"><span>Approved</span><strong>{{ summary.approved_images }}</strong></article>
+      <article class="metric-card"><span>Total potholes</span><strong>{{ summary.total_potholes }}</strong></article>
+      <article class="metric-card"><span>Dataset version</span><strong>v{{ summary.current_dataset_version }}</strong></article>
+      <article class="metric-card"><span>Latest mAP50</span><strong>{% if summary.latest_model_accuracy %}{{ summary.latest_model_accuracy }}{% else %}--{% endif %}</strong></article>
+      <article class="metric-card critical"><span>Rejected</span><strong>{{ summary.rejected_images }}</strong></article>
+    </div>
+    <div class="workspace-grid two">
+      <section class="workspace-panel">
+        <h2>Dataset Split</h2>
+        <div class="compact-list">
+          {% for split in split_counts %}
+            <div class="module-row">
+              <strong>{{ split.split|upper }}</strong>
+              <span>{{ split.total }} images</span>
+            </div>
+          {% empty %}
+            <p class="muted">No images have been uploaded yet.</p>
+          {% endfor %}
+        </div>
+      </section>
+      <section class="workspace-panel">
+        <h2>Quality Status</h2>
+        <div class="compact-list">
+          {% for status in status_counts %}
+            <div class="module-row">
+              <strong>{{ status.status }}</strong>
+              <span>{{ status.total }} images</span>
+            </div>
+          {% empty %}
+            <p class="muted">No review statuses are available yet.</p>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
+    <section class="workspace-panel">
+      <h2>Audit Trail</h2>
+      <div class="compact-list">
+        {% for log in audit_logs %}
+          <div class="module-row" data-search-text="{{ log.action }} {{ log.message }}">
+            <strong>{{ log.action|upper }} - {{ log.created_at|date:"M d, H:i" }}</strong>
+            <span>{{ log.message }}</span>
+          </div>
+        {% empty %}
+          <p class="muted">Dataset activity will appear here.</p>
+        {% endfor %}
+      </div>
+    </section>
+
+  {% elif tab == "upload" %}
+    <section class="workspace-panel">
+      <h2>Upload Road Images</h2>
+      <p class="muted">Images are proposed by the active validated segmentation model, then require manual mask review. Images without detections are retained as negative road examples.</p>
+      <form method="post" enctype="multipart/form-data" class="dataset-upload-form" id="dataset-upload-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="upload_images">
+        <label class="drop-zone" id="dataset-drop-zone">
+          <span>Drop JPG, PNG, or WEBP road images here</span>
+          <small>Max 10 MB, minimum 320x240 resolution. Duplicate files are skipped by SHA-256 hash.</small>
+          <input type="file" name="images" id="dataset-image-input" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple>
+        </label>
+        <input name="train_percent" type="hidden" value="70">
+        <input name="val_percent" type="hidden" value="20">
+        <input name="test_percent" type="hidden" value="10">
+        <label>Source group {{ upload_form.source_group }}<small>{{ upload_form.source_group.help_text }}</small></label>
+        <label>Batch notes {{ upload_form.notes }}</label>
+        <div class="dataset-preview-grid" id="dataset-preview-grid" aria-live="polite"></div>
+        <button class="primary-mini" type="submit">Upload and train automatically</button>
+      </form>
+    </section>
+    <section class="workspace-panel">
+      <h2>Latest Segmentation Results</h2>
+      <div class="dataset-preview-grid">
+        {% for image in images|slice:":12" %}
+          <article class="dataset-preview-tile">
+            {% if image.labeled_preview %}
+              <img src="{{ image.labeled_preview.url }}" alt="Segmented pothole result for {{ image.original_filename }}">
+            {% else %}
+              <img src="{{ image.image.url }}" alt="{{ image.original_filename }}">
+            {% endif %}
+            <strong>{{ image.original_filename }}</strong>
+            <span>{{ image.pothole_count }} pothole{{ image.pothole_count|pluralize }}</span>
+          </article>
+        {% empty %}
+          <p class="muted">Analyzed images will appear here after upload.</p>
+        {% endfor %}
+      </div>
+    </section>
+
+  {% elif tab == "annotate" %}
+    <div class="dataset-annotator-grid">
+      <aside class="workspace-panel dataset-image-queue">
+        <h2>Image Queue</h2>
+        <div class="compact-list">
+          {% for image in images %}
+            <a class="module-row {% if selected_image and selected_image.pk == image.pk %}is-active{% endif %}" href="?tab=annotate&image={{ image.pk }}" data-search-text="{{ image.dataset_id }} {{ image.original_filename }} {{ image.status }}">
+              <strong>{{ image.dataset_id }}</strong>
+              <span>{{ image.original_filename }}</span>
+              <span class="status-badge {{ image.status }}">{{ image.status }}</span>
+            </a>
+          {% empty %}
+            <p class="muted">Upload images before annotating potholes.</p>
+          {% endfor %}
+        </div>
+      </aside>
+      <section class="workspace-panel">
+        <h2>Pothole Annotation</h2>
+        {% if selected_image %}
+          <p class="muted">Choose Draw mask, then press and drag around the visible pothole boundary with a mouse, pen, or finger. Release to close and place the mask.</p>
+          <div class="dataset-annotator" data-image-width="{{ selected_image.width }}" data-image-height="{{ selected_image.height }}">
+            <div class="annotation-stage" id="annotation-stage">
+              <img id="annotation-image" src="{{ selected_image.image.url }}" alt="Road image {{ selected_image.dataset_id }}" draggable="false">
+              <div
+                class="annotation-overlay"
+                id="annotation-overlay"
+                tabindex="0"
+                aria-label="Mask drawing area. Activate Draw mask, then drag around a pothole and release to place the mask."
+              ></div>
+            </div>
+            <div class="annotation-toolbar">
+              <span class="status-badge {{ selected_image.status }}">{{ selected_image.status }}</span>
+              <strong>{{ selected_image.dataset_id }}</strong>
+              <button type="button" id="start-mask" aria-pressed="false">Draw mask</button>
+              <button type="button" id="undo-last-mask">Undo last mask</button>
+              <button type="button" id="delete-selected-box">Delete selected mask</button>
+              <button type="button" id="clear-boxes">Clear masks</button>
+              <span class="mask-draw-status" id="mask-draw-status" role="status" aria-live="polite">Select Draw mask to begin.</span>
+            </div>
+            <form method="post" class="module-form" id="annotation-form">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="save_annotations">
+              <input type="hidden" name="image_id" value="{{ selected_image.pk }}">
+              <input type="hidden" name="annotations_json" id="annotations-json">
+              <button type="submit">Save masks to dataset</button>
+            </form>
+          </div>
+        {% else %}
+          <p class="muted">No dataset image is available for annotation.</p>
+        {% endif %}
+      </section>
+    </div>
+
+  {% elif tab == "review" %}
+    <section class="workspace-panel">
+      <h2>Dataset Quality Review</h2>
+      <p class="muted">A source group must live in exactly one split. Move whole route/video groups here; never move individual adjacent frames.</p>
+      <form method="post" class="inline-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="move_source_group">
+        <select name="source_group" required>
+          {% for group in source_groups %}
+            <option value="{{ group.source_group }}">{{ group.source_group }} ({% if group.split_count > 1 %}leaking across splits{% else %}{{ group.current_split }}{% endif %}, {{ group.total }} images)</option>
+          {% endfor %}
+        </select>
+        <select name="split" required>
+          <option value="train">Train</option>
+          <option value="val">Validation</option>
+          <option value="test">Test</option>
+        </select>
+        <button type="submit">Move whole group</button>
+      </form>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Image</th><th>Split / source group</th><th>Status</th><th>Instances</th><th>Quality</th><th>Review</th></tr></thead>
+          <tbody>
+          {% for item in reviewed_images %}
+            <tr data-search-text="{{ item.image.dataset_id }} {{ item.image.original_filename }} {{ item.image.status }}">
+              <td><strong>{{ item.image.dataset_id }}</strong><br><span class="muted">{{ item.image.original_filename }}</span></td>
+              <td>{{ item.image.split }}<br><span class="muted">{{ item.image.source_group }}</span></td>
+              <td><span class="status-badge {{ item.image.status }}">{{ item.image.status }}</span></td>
+              <td>{{ item.image.pothole_count }}</td>
+              <td>
+                {% if item.quality_flags %}
+                  {% for flag in item.quality_flags %}<span class="severity-badge high">{{ flag }}</span>{% endfor %}
+                {% else %}
+                  <span class="severity-badge low">clean</span>
+                {% endif %}
+              </td>
+              <td>
+                <a class="panel-link" href="?tab=annotate&amp;image={{ item.image.pk }}">Inspect / redraw masks</a>
+                <form method="post" class="inline-form dataset-review-form">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="review_image">
+                  <input type="hidden" name="image_id" value="{{ item.image.pk }}">
+                  <select name="status">
+                    <option value="unannotated" {% if item.image.status == "unannotated" %}selected{% endif %}>Unannotated</option>
+                    <option value="partial" {% if item.image.status == "partial" %}selected{% endif %}>Partially annotated</option>
+                    <option value="full" {% if item.image.status == "full" %}selected{% endif %}>Fully annotated</option>
+                    <option value="approved" {% if item.image.status == "approved" %}selected{% endif %}>Approved</option>
+                    <option value="rejected" {% if item.image.status == "rejected" %}selected{% endif %}>Rejected</option>
+                  </select>
+                  <input name="review_notes" value="{{ item.image.review_notes }}" placeholder="Review notes">
+                  <button type="submit">Save</button>
+                </form>
+                <form method="post" class="inline-form archive-form">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="archive_image">
+                  <input type="hidden" name="image_id" value="{{ item.image.pk }}">
+                  <button type="submit">Archive</button>
+                </form>
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6">No dataset images are ready for review.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  {% elif tab == "augmentation" %}
+    <section class="workspace-panel">
+      <h2>Data Augmentation</h2>
+      <form method="post" class="augmentation-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="run_augmentation">
+        <div class="augmentation-grid">
+          <label><input type="checkbox" name="augmentations" value="hflip"> Horizontal flipping</label>
+          <label><input type="checkbox" name="augmentations" value="rotate"> Rotation 90 degrees</label>
+          <label><input type="checkbox" name="augmentations" value="brightness"> Brightness adjustment</label>
+          <label><input type="checkbox" name="augmentations" value="contrast"> Contrast adjustment</label>
+          <label><input type="checkbox" name="augmentations" value="scale"> Scaling</label>
+          <label><input type="checkbox" name="augmentations" value="crop"> Cropping</label>
+          <label><input type="checkbox" name="augmentations" value="blur"> Blurring</label>
+          <label><input type="checkbox" name="augmentations" value="noise"> Noise addition</label>
+          <label><input type="checkbox" name="augmentations" value="rain"> Rain simulation</label>
+          <label><input type="checkbox" name="augmentations" value="shadow"> Shadow simulation</label>
+          <label><input type="checkbox" name="augmentations" value="low_light"> Low-light simulation</label>
+        </div>
+        <button class="primary-mini" type="submit">Generate augmented images</button>
+      </form>
+      <div class="compact-list">
+        {% for job in augmentation_jobs %}
+          <div class="module-row">
+            <strong>Job #{{ job.pk }} - {{ job.status }}</strong>
+            <span>{{ job.generated_count }} generated - {{ job.created_at|date:"M d, H:i" }}</span>
+          </div>
+        {% empty %}
+          <p class="muted">Augmentation jobs will appear here.</p>
+        {% endfor %}
+      </div>
+    </section>
+
+  {% elif tab == "train" %}
+    <section class="workspace-panel">
+      <h2>YOLO Model Training</h2>
+      <p><strong>Dataset gate:</strong> {% if dataset_readiness.ready %}ready{% else %}blocked{% endif %}</p>
+      {% for error in dataset_readiness.errors %}<p class="muted">{{ error }}</p>{% endfor %}
+      <form method="post" class="training-config-grid">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="start_training">
+        <label>Pretrained model {{ training_form.model_name }}</label>
+        <label>Epochs {{ training_form.epochs }}</label>
+        <label>Batch size {{ training_form.batch_size }}</label>
+        <label>Image size {{ training_form.image_size }}</label>
+        <label>Learning rate {{ training_form.learning_rate }}</label>
+        <label>Device / GPU {{ training_form.device }}</label>
+        <label>Early stopping patience {{ training_form.patience }}</label>
+        <label>Workers {{ training_form.workers }}</label>
+        <label>Optimizer {{ training_form.optimizer }}</label>
+        <label>Road-scene augmentation {{ training_form.augmentation_profile }}</label>
+        <label>Reproducibility seed {{ training_form.seed }}</label>
+        <label>Frozen backbone layers {{ training_form.freeze_layers }}</label>
+        <p class="muted">The approved dataset is snapshotted when queued. The final deployment gate uses the untouched test split.</p>
+        <button class="primary-mini" type="submit" {% if not dataset_readiness.ready %}disabled{% endif %}>Queue training session</button>
+      </form>
+    </section>
+
+  {% elif tab == "history" %}
+    <section class="workspace-panel">
+      <h2>Training History</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Model</th><th>Dataset</th><th>Profile</th><th>Status</th><th>Progress</th><th>Local precision</th><th>Local recall</th><th>Local mask mAP50</th><th>Local mask mAP50-95</th><th>Model file</th></tr></thead>
+          <tbody>
+          {% for session in training_sessions %}
+            <tr>
+              <td>{{ session.model_name }}</td>
+              <td>{% if session.dataset_version %}v{{ session.dataset_version.version_number }}{% else %}--{% endif %}</td>
+              <td>{{ session.augmentation_profile }} / {{ session.optimizer }}</td>
+              <td><span class="status-badge {{ session.status }}">{{ session.status }}</span></td>
+              <td>{{ session.current_epoch }}/{{ session.epochs }} - {{ session.progress }}%</td>
+              <td>{{ session.local_precision|default:"--" }}</td>
+              <td>{{ session.local_recall|default:"--" }}</td>
+              <td>{{ session.local_map50|default:"--" }}</td>
+              <td>{{ session.local_map5095|default:"--" }}</td>
+              <td>{{ session.model_task|default:"unknown" }} / {{ session.model_file|default:"best.pt pending" }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="10">No training sessions have been queued.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  {% elif tab == "test" %}
+    <div class="workspace-grid two">
+      <section class="workspace-panel">
+        <h2>Pothole Detection Testing</h2>
+        <form method="post" enctype="multipart/form-data" class="module-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="test_detection">
+          <label>Test image <input type="file" name="test_image" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"></label>
+          <label>Confidence threshold {{ detection_form.confidence_threshold }}</label>
+          <label>IoU threshold {{ detection_form.iou_threshold }}</label>
+          <button type="submit">Run detection test</button>
+        </form>
+      </section>
+      <section class="workspace-panel">
+        <h2>Model Test Output</h2>
+        <div class="compact-list">
+          {% for test in detection_tests %}
+            <div class="module-row">
+              <strong>{{ test.original_filename }} - {{ test.status }}</strong>
+              <span>{{ test.detection_count }} potholes - {{ test.processing_time_ms }} ms</span>
+              {% if test.result_image %}<img class="dataset-result-image" src="{{ test.result_image.url }}" alt="Detection result {{ test.pk }}">{% endif %}
+              <form method="post" class="inline-form">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="add_detection_to_dataset">
+                <input type="hidden" name="test_id" value="{{ test.pk }}">
+                <button type="submit">Add to dataset review</button>
+              </form>
+            </div>
+          {% empty %}
+            <p class="muted">Upload a trained-model test image to see detections.</p>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
+
+  {% elif tab == "export" %}
+    <section class="workspace-panel">
+      <h2>Dataset Export</h2>
+      <p class="muted">Approved images are exported into the required YOLO folder structure with normalized label files.</p>
+      <pre class="yaml-preview">dataset/images/train
+dataset/images/val
+dataset/images/test
+dataset/labels/train
+dataset/labels/val
+dataset/labels/test
+
+path: dataset
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: pothole</pre>
+      <a class="primary-mini module-action" href="{% url 'admin_training_dataset_export' %}">Download dataset ZIP</a>
+    </section>
+  {% endif %}
+</section>
+{{ selected_annotations|json_script:"dataset-annotations" }}
+{% endblock %}
