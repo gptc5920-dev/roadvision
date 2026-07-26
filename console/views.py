@@ -5,8 +5,10 @@ import io
 import json
 import ipaddress
 import logging
+import mimetypes
 import os
 import random
+import re
 import socket
 import subprocess
 import sys
@@ -25,7 +27,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.db.models import Count, Min, Q
-from django.http import HttpResponse, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.text import get_valid_filename
@@ -95,6 +97,29 @@ VIDEO_MIME_TYPES = {
     "webm": "video/webm",
 }
 logger = logging.getLogger(__name__)
+BYTE_RANGE_PATTERN = re.compile(r"^bytes=(\d*)-(\d*)$")
+
+
+class LimitedFileReader:
+    def __init__(self, file_object, length, block_size=1024 * 1024):
+        self.file_object = file_object
+        self.remaining = length
+        self.block_size = block_size
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.remaining <= 0:
+            raise StopIteration
+        data = self.file_object.read(min(self.block_size, self.remaining))
+        if not data:
+            raise StopIteration
+        self.remaining -= len(data)
+        return data
+
+    def close(self):
+        self.file_object.close()
 
 
 def safe_media_url(field_file):
@@ -105,6 +130,45 @@ def safe_media_url(field_file):
     except Exception:
         logger.exception("Could not resolve media URL for %s.", getattr(field_file, "name", "unknown media"))
         return ""
+
+
+def stored_media_available(field_file):
+    if not field_file:
+        return False
+    try:
+        return field_file.storage.exists(field_file.name)
+    except Exception:
+        logger.exception("Could not verify stored media %s.", getattr(field_file, "name", "unknown media"))
+        return False
+
+
+def video_review_url(analysis, media_kind, field_file):
+    if not stored_media_available(field_file):
+        return ""
+    if settings.AWS_STORAGE_BUCKET_NAME:
+        return safe_media_url(field_file)
+    return reverse("admin_video_visualizer_media", args=[analysis.pk, media_kind])
+
+
+def parse_byte_range(header, file_size):
+    match = BYTE_RANGE_PATTERN.fullmatch((header or "").strip())
+    if not match:
+        return None
+    start_text, end_text = match.groups()
+    if not start_text and not end_text:
+        return None
+    if start_text:
+        start = int(start_text)
+        end = int(end_text) if end_text else file_size - 1
+    else:
+        suffix_length = int(end_text)
+        if suffix_length <= 0:
+            return None
+        start = max(0, file_size - suffix_length)
+        end = file_size - 1
+    if start >= file_size or start > end:
+        return None
+    return start, min(end, file_size - 1)
 
 
 def video_analysis_progress(analysis):
@@ -2400,13 +2464,22 @@ def video_visualizer(request):
     video_source_type = ""
     video_fallback_url = ""
     video_fallback_type = ""
+    video_files_missing = False
     if selected_analysis:
         if selected_analysis.processed_video:
-            video_source_url = safe_media_url(selected_analysis.processed_video)
+            video_source_url = video_review_url(
+                selected_analysis,
+                "processed",
+                selected_analysis.processed_video,
+            )
             if video_source_url:
                 video_source_type = "video/mp4"
             if selected_analysis.video:
-                original_url = safe_media_url(selected_analysis.video)
+                original_url = video_review_url(
+                    selected_analysis,
+                    "original",
+                    selected_analysis.video,
+                )
                 original_type = VIDEO_MIME_TYPES.get(
                     (selected_analysis.file_type or "").lower(),
                     "application/octet-stream",
@@ -2418,12 +2491,20 @@ def video_visualizer(request):
                     video_source_url = original_url
                     video_source_type = original_type
         elif selected_analysis.video:
-            video_source_url = safe_media_url(selected_analysis.video)
+            video_source_url = video_review_url(
+                selected_analysis,
+                "original",
+                selected_analysis.video,
+            )
             if video_source_url:
                 video_source_type = VIDEO_MIME_TYPES.get(
                     (selected_analysis.file_type or "").lower(),
                     "application/octet-stream",
                 )
+        video_files_missing = bool(
+            (selected_analysis.video or selected_analysis.processed_video)
+            and not video_source_url
+        )
     progress_percent, remaining_percent = video_analysis_progress(selected_analysis)
     context = admin_context(request, "video_analyzer") | {
         "upload_form": upload_form,
@@ -2446,6 +2527,7 @@ def video_visualizer(request):
         "video_source_type": video_source_type,
         "video_fallback_url": video_fallback_url,
         "video_fallback_type": video_fallback_type,
+        "video_files_missing": video_files_missing,
         "progress_percent": progress_percent,
         "remaining_percent": remaining_percent,
         "active_model": configuration.model_session,
@@ -2503,6 +2585,71 @@ def video_visualizer_status(request, analysis_id):
         }
     )
     response["Cache-Control"] = "no-store"
+    return response
+
+
+@staff_required
+def video_visualizer_media(request, analysis_id, media_kind):
+    analysis = get_object_or_404(VideoVisualizerAnalysis, pk=analysis_id)
+    fields = {
+        "original": analysis.video,
+        "processed": analysis.processed_video,
+    }
+    field_file = fields.get(media_kind)
+    if not field_file:
+        raise Http404("Video file is not available.")
+
+    try:
+        file_size = field_file.size
+        file_object = field_file.open("rb")
+    except Exception as exc:
+        logger.warning(
+            "Video media is unavailable for analysis %s (%s): %s",
+            analysis.pk,
+            media_kind,
+            exc,
+        )
+        raise Http404("Video file is not available.") from exc
+
+    content_type = (
+        "video/mp4"
+        if media_kind == "processed"
+        else VIDEO_MIME_TYPES.get(
+            (analysis.file_type or "").lower(),
+            mimetypes.guess_type(analysis.original_filename)[0] or "application/octet-stream",
+        )
+    )
+    range_header = request.headers.get("Range", "")
+    byte_range = parse_byte_range(range_header, file_size) if range_header else None
+    if range_header and byte_range is None:
+        file_object.close()
+        response = HttpResponse(status=416)
+        response["Content-Range"] = f"bytes */{file_size}"
+        response["Accept-Ranges"] = "bytes"
+        return response
+
+    if byte_range:
+        start, end = byte_range
+        file_object.seek(start)
+        content_length = end - start + 1
+        response = StreamingHttpResponse(
+            LimitedFileReader(file_object, content_length),
+            status=206,
+            content_type=content_type,
+        )
+        response["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+    else:
+        content_length = file_size
+        response = StreamingHttpResponse(
+            LimitedFileReader(file_object, content_length),
+            content_type=content_type,
+        )
+
+    response["Content-Length"] = str(content_length)
+    response["Accept-Ranges"] = "bytes"
+    response["Content-Disposition"] = "inline"
+    response["Cache-Control"] = "private, max-age=3600"
+    response["X-Content-Type-Options"] = "nosniff"
     return response
 
 

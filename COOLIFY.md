@@ -79,6 +79,19 @@ media bucket private. Django creates short-lived signed URLs for authorized
 video and snapshot access. Set `AWS_S3_ENDPOINT_URL` only for an S3-compatible
 provider; leave it blank for AWS S3.
 
+If S3 is not configured, RoadVision stores media under `/app/media` and serves
+review videos through an authenticated byte-range endpoint. In Coolify, add a
+persistent volume before uploading production footage:
+
+```text
+Name: roadvision-media
+Destination Path: /app/media
+```
+
+Without this volume, uploads and processed videos are deleted when Coolify
+replaces the application container during a deployment. Database records for
+those deleted files cannot restore the footage; upload and analyze it again.
+
 ## 4. Domain and deployment
 
 Assign the normal HTTPS domain to the application. Coolify routes it to the

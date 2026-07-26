@@ -201,7 +201,9 @@
               {% endif %}
             {% else %}
               <div class="visualizer-empty">
-                {% if analysis.status == "queued" or analysis.status == "retrying" %}
+                {% if video_files_missing %}
+                  The stored video is no longer available. Upload the source video again, and keep <code>/app/media</code> on persistent storage in Coolify.
+                {% elif analysis.status == "queued" or analysis.status == "retrying" %}
                   Analysis queued. The page will update automatically when processing starts.
                 {% elif analysis.status == "running" %}
                   {% if analysis.model_session.model_task == "detect" %}Detecting and tracking road defects{% else %}Detecting potholes and generating masks{% endif %}: frame {{ analysis.current_frame }} of {{ analysis.frame_count }}.

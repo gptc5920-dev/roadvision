@@ -293,10 +293,12 @@ class AnalyzerSettingsTests(TestCase):
                 created_by=self.user,
             )
             response = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
-            self.assertContains(response, analysis.processed_video.url)
-            self.assertContains(response, analysis.video.url)
+            processed_url = f"/_authenticated/admin/video-analyzer/{analysis.pk}/media/processed/"
+            original_url = f"/_authenticated/admin/video-analyzer/{analysis.pk}/media/original/"
+            self.assertContains(response, processed_url)
+            self.assertContains(response, original_url)
             content = response.content.decode()
-            self.assertLess(content.index(analysis.processed_video.url), content.index(analysis.video.url))
+            self.assertLess(content.index(processed_url), content.index(original_url))
             self.assertContains(response, 'type="video/mp4"')
             self.assertContains(response, 'id="viz-toggle-masks"')
             self.assertContains(response, '<option value="0.1">0.1x</option>', html=True)
@@ -316,8 +318,36 @@ class AnalyzerSettingsTests(TestCase):
                 created_by=self.user,
             )
             response = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
-            self.assertContains(response, analysis.video.url)
+            self.assertContains(
+                response,
+                f"/_authenticated/admin/video-analyzer/{analysis.pk}/media/original/",
+            )
             self.assertContains(response, 'type="video/quicktime"')
+
+    def test_review_video_endpoint_supports_browser_byte_ranges(self):
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            analysis = VideoVisualizerAnalysis.objects.create(
+                video=SimpleUploadedFile("range-road.mp4", b"0123456789", content_type="video/mp4"),
+                original_filename="range-road.mp4",
+                file_hash="0" * 64,
+                file_type="mp4",
+                status=VideoVisualizerStatus.COMPLETE,
+                model_session=self.model,
+                created_by=self.user,
+            )
+            response = self.client.get(
+                f"/_authenticated/admin/video-analyzer/{analysis.pk}/media/original/",
+                HTTP_RANGE="bytes=2-5",
+            )
+            content = b"".join(response.streaming_content)
+            response.close()
+
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(content, b"2345")
+        self.assertEqual(response["Content-Range"], "bytes 2-5/10")
+        self.assertEqual(response["Content-Length"], "4")
+        self.assertEqual(response["Accept-Ranges"], "bytes")
+        self.assertEqual(response["Content-Type"], "video/mp4")
 
     @override_settings(
         AUTO_START_ANALYSIS_WORKER=False,
@@ -377,7 +407,10 @@ class AnalyzerSettingsTests(TestCase):
             )
             response = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
             self.assertContains(response, 'id="visualizer-video"')
-            self.assertContains(response, analysis.video.url)
+            self.assertContains(
+                response,
+                f"/_authenticated/admin/video-analyzer/{analysis.pk}/media/original/",
+            )
             self.assertContains(response, "raw video preview is available")
             self.assertContains(response, f'data-status-url="/_authenticated/admin/video-analyzer/{analysis.pk}/status/"')
             self.assertContains(response, 'id="processing-modal"')
@@ -420,7 +453,10 @@ class AnalyzerSettingsTests(TestCase):
                 created_by=self.user,
             )
             response = self.client.get("/_authenticated/admin/video-analyzer/")
-            self.assertContains(response, completed.video.url)
+            self.assertContains(
+                response,
+                f"/_authenticated/admin/video-analyzer/{completed.pk}/media/original/",
+            )
 
     def test_detection_results_are_managed_in_defect_inventory(self):
         analysis = VideoVisualizerAnalysis.objects.create(

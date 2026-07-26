@@ -14,6 +14,11 @@ urlpatterns = [
     path("_authenticated/admin/", views.video_visualizer, name="admin_video_analyzer"),
     path("_authenticated/admin/video-analyzer/", views.video_visualizer, name="admin_video_analyzer_explicit"),
     path("_authenticated/admin/video-analyzer/<int:analysis_id>/status/", views.video_visualizer_status, name="admin_video_visualizer_status"),
+    path(
+        "_authenticated/admin/video-analyzer/<int:analysis_id>/media/<str:media_kind>/",
+        views.video_visualizer_media,
+        name="admin_video_visualizer_media",
+    ),
     path("_authenticated/admin/video-analyzer/<int:analysis_id>/csv/", views.video_analysis_csv, name="video_analysis_csv"),
     path("_authenticated/admin/video-analyzer/clear/", views.clear_video_analyses, name="clear_video_analyses"),
     path(
