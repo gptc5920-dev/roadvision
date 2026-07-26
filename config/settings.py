@@ -3,7 +3,6 @@ from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
-
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
@@ -15,11 +14,15 @@ def env_bool(name, default=False):
 ENVIRONMENT = os.environ.get("ROADVISION_ENV", "development").lower()
 DEBUG = env_bool("DJANGO_DEBUG", ENVIRONMENT != "production")
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "django-insecure-roadvision-local-development")
+
+# Defaulting to '*' in non-development if not explicitly provided avoids 404/400 Host header drops in Coolify
+default_allowed_hosts = "*" if ENVIRONMENT == "production" else "localhost,127.0.0.1,testserver"
 ALLOWED_HOSTS = [
     host.strip()
-    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver").split(",")
+    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", default_allowed_hosts).split(",")
     if host.strip()
 ]
+
 if ENVIRONMENT == "production" and SECRET_KEY.startswith("django-insecure-"):
     raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set to a strong secret in production.")
 
@@ -47,7 +50,7 @@ ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [
     {
-        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "BACKEND": "django.template.backends.DjangoTemplates",
         "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
@@ -92,10 +95,14 @@ TIME_ZONE = "Asia/Singapore"
 USE_I18N = True
 USE_TZ = True
 
+# Static files setup
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
 AWS_STORAGE_BUCKET_NAME = os.environ.get("AWS_STORAGE_BUCKET_NAME", "")
 if AWS_STORAGE_BUCKET_NAME:
     STORAGES = {
@@ -143,6 +150,10 @@ AUTO_TRAIN_BATCH_SIZE = int(os.environ.get("AUTO_TRAIN_BATCH_SIZE", "16"))
 AUTO_TRAIN_IMAGE_SIZE = int(os.environ.get("AUTO_TRAIN_IMAGE_SIZE", "512"))
 AUTO_TRAIN_DEVICE = os.environ.get("AUTO_TRAIN_DEVICE", "cpu")
 AUTO_START_ANALYSIS_WORKER = env_bool("AUTO_START_ANALYSIS_WORKER", ENVIRONMENT != "production")
+
+# Reverse Proxy / SSL Settings for Coolify & Traefik
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True
 
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
