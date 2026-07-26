@@ -414,6 +414,11 @@ label {
 }
 
 .visualizer-page {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  padding-right: 0;
+  padding-left: 0;
   padding-top: 18px;
 }
 
