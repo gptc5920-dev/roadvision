@@ -20,7 +20,7 @@ trap shutdown EXIT INT TERM
 
 python manage.py check --deploy
 python manage.py migrate --noinput
-python manage.py createcachetable "${DJANGO_CACHE_TABLE:-roadvision_cache}" --noinput
+python manage.py createcachetable "${DJANGO_CACHE_TABLE:-roadvision_cache}"
 python manage.py collectstatic --noinput
 
 python manage.py run_video_visualizer_analysis \
