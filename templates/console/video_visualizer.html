@@ -156,7 +156,7 @@
               <div class="video-processing-notice" id="continuous-live-status" aria-live="polite">
                 {% if analysis.stop_requested %}Stopping safely and finalizing snapshots...{% elif analysis.error_message %}{{ analysis.error_message }}{% elif analysis.status == "complete" %}Continuous detection stopped. The final annotated frame and snapshots are retained.{% else %}Continuous detection is active until an operator stops it.{% endif %}
               </div>
-            {% elif analysis.video or analysis.processed_video %}
+            {% elif video_source_url %}
               <video
                 id="visualizer-video"
                 controls
@@ -164,15 +164,18 @@
                 playsinline
               >
                 <source
-                  src="{% if analysis.video %}{{ analysis.video.url }}{% else %}{{ analysis.processed_video.url }}{% endif %}"
-                  type="{% if analysis.video and analysis.file_type == 'webm' %}video/webm{% else %}video/mp4{% endif %}"
+                  src="{{ video_source_url }}"
+                  type="{{ video_source_type }}"
                 >
+                {% if video_fallback_url %}
+                  <source src="{{ video_fallback_url }}" type="{{ video_fallback_type }}">
+                {% endif %}
                 Your browser could not play this video. Use the download link below.
               </video>
-              <div class="video-media-status" id="video-media-status" hidden>
-                The video could not be loaded in this browser. Use Download video to open the source file.
+              <div class="video-media-status" id="video-media-status" role="status" aria-live="polite" hidden>
+                The video could not be played in this browser. Download it below or reanalyze it to create a compatible MP4.
               </div>
-              <a class="video-download-link" href="{% if analysis.video %}{{ analysis.video.url }}{% else %}{{ analysis.processed_video.url }}{% endif %}" download>
+              <a class="video-download-link" href="{{ video_source_url }}" download>
                 Download video
               </a>
               <div class="video-overlay-layer" id="video-overlay-layer"></div>

@@ -86,6 +86,13 @@ ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 ALLOWED_GPS_EXTENSIONS = {".csv", ".gpx", ".json"}
 MAX_VISUALIZER_VIDEO_BYTES = 750 * 1024 * 1024
 MAX_VISUALIZER_GPS_BYTES = 10 * 1024 * 1024
+VIDEO_MIME_TYPES = {
+    "avi": "video/x-msvideo",
+    "mkv": "video/x-matroska",
+    "mov": "video/quicktime",
+    "mp4": "video/mp4",
+    "webm": "video/webm",
+}
 
 
 def landing(request):
@@ -2349,6 +2356,26 @@ def video_visualizer(request):
         for detection in frame.get("detections", [])
         if isinstance(detection, dict)
     )
+    video_source_url = ""
+    video_source_type = ""
+    video_fallback_url = ""
+    video_fallback_type = ""
+    if selected_analysis:
+        if selected_analysis.processed_video:
+            video_source_url = selected_analysis.processed_video.url
+            video_source_type = "video/mp4"
+            if selected_analysis.video:
+                video_fallback_url = selected_analysis.video.url
+                video_fallback_type = VIDEO_MIME_TYPES.get(
+                    selected_analysis.file_type.lower(),
+                    "application/octet-stream",
+                )
+        elif selected_analysis.video:
+            video_source_url = selected_analysis.video.url
+            video_source_type = VIDEO_MIME_TYPES.get(
+                selected_analysis.file_type.lower(),
+                "application/octet-stream",
+            )
     context = admin_context(request, "video_analyzer") | {
         "upload_form": upload_form,
         "analyses": analyses,
@@ -2366,6 +2393,10 @@ def video_visualizer(request):
         "timeline_markers": timeline_markers,
         "frame_detections": frame_detections,
         "has_estimated_masks": has_estimated_masks,
+        "video_source_url": video_source_url,
+        "video_source_type": video_source_type,
+        "video_fallback_url": video_fallback_url,
+        "video_fallback_type": video_fallback_type,
         "active_model": configuration.model_session,
         "analyzer_configuration": configuration,
         "detection_mask_refinement": settings.DETECTION_MASK_REFINEMENT,

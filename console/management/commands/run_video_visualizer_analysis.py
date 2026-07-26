@@ -2,6 +2,7 @@ import gzip
 import json
 import os
 import socket
+import subprocess
 import tempfile
 import time
 import uuid
@@ -31,6 +32,56 @@ from console.storage_paths import resolve_model_artifact
 
 class AnalysisCancelled(CommandError):
     pass
+
+
+def transcode_browser_mp4(source_path):
+    """Convert OpenCV's intermediate video into a browser-compatible H.264 MP4."""
+    output_fd, output_path = tempfile.mkstemp(suffix="-browser.mp4")
+    os.close(output_fd)
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-i",
+                str(source_path),
+                "-map",
+                "0:v:0",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "23",
+                "-pix_fmt",
+                "yuv420p",
+                "-vf",
+                "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                "-movflags",
+                "+faststart",
+                "-an",
+                output_path,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            error = (result.stderr or "FFmpeg did not produce a playable MP4.").strip()
+            raise CommandError(f"Browser-compatible video encoding failed: {error[-1200:]}")
+        return output_path
+    except FileNotFoundError as exc:
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        raise CommandError("FFmpeg is required to create a browser-compatible analyzed video.") from exc
+    except Exception:
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        raise
 
 
 def iou(box_a, box_b):
@@ -773,6 +824,11 @@ class Command(BaseCommand):
             detection_stream.write("]")
             detection_stream.close()
             self._active_detection_stream = None
+        if output_path is not None:
+            browser_output_path = transcode_browser_mp4(output_path)
+            os.remove(output_path)
+            output_path = browser_output_path
+            self._active_output_path = output_path
 
         elapsed_ms = previous_processing_ms + int((time.perf_counter() - started) * 1000)
         if not VideoVisualizerAnalysis.objects.filter(

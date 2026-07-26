@@ -216,7 +216,7 @@ class AnalyzerSettingsTests(TestCase):
             self.assertEqual(analysis.iou_threshold, 52)
             self.assertEqual(analysis.input_resolution, 768)
 
-    def test_completed_analyzer_plays_original_with_live_mask_overlay(self):
+    def test_completed_analyzer_prefers_processed_browser_video_with_original_fallback(self):
         with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
             analysis = VideoVisualizerAnalysis.objects.create(
                 video=SimpleUploadedFile("road.mp4", b"original-video", content_type="video/mp4"),
@@ -230,10 +230,31 @@ class AnalyzerSettingsTests(TestCase):
                 created_by=self.user,
             )
             response = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
+            self.assertContains(response, analysis.processed_video.url)
             self.assertContains(response, analysis.video.url)
+            content = response.content.decode()
+            self.assertLess(content.index(analysis.processed_video.url), content.index(analysis.video.url))
+            self.assertContains(response, 'type="video/mp4"')
             self.assertContains(response, 'id="viz-toggle-masks"')
             self.assertContains(response, '<option value="0.1">0.1x</option>', html=True)
             self.assertContains(response, '<option value="0.25">0.25x</option>', html=True)
+
+    @override_settings(AUTO_START_ANALYSIS_WORKER=False)
+    def test_original_video_uses_its_actual_browser_mime_type(self):
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            analysis = VideoVisualizerAnalysis.objects.create(
+                video=SimpleUploadedFile("road.mov", b"original-video", content_type="video/quicktime"),
+                original_filename="road.mov",
+                file_hash="f" * 64,
+                file_type="mov",
+                fps=30,
+                status=VideoVisualizerStatus.QUEUED,
+                model_session=self.model,
+                created_by=self.user,
+            )
+            response = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
+            self.assertContains(response, analysis.video.url)
+            self.assertContains(response, 'type="video/quicktime"')
 
     @override_settings(
         AUTO_START_ANALYSIS_WORKER=False,

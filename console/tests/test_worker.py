@@ -1,11 +1,46 @@
+import os
+import subprocess
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+
 from django.test import TestCase, override_settings
 
-from console.management.commands.run_video_visualizer_analysis import Command, merge_fragmented_tracks
+from console.management.commands.run_video_visualizer_analysis import (
+    Command,
+    merge_fragmented_tracks,
+    transcode_browser_mp4,
+)
 from console.models import TrainingSession, VideoVisualizerAnalysis, VideoVisualizerStatus
 from console.segmentation import estimate_detection_mask
 
 
 class WorkerLeaseTests(TestCase):
+    def test_processed_video_is_transcoded_to_browser_compatible_h264(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            source_path = Path(temporary_directory) / "opencv.mp4"
+            source_path.write_bytes(b"opencv-video")
+
+            def encode(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"h264-video")
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with patch(
+                "console.management.commands.run_video_visualizer_analysis.subprocess.run",
+                side_effect=encode,
+            ) as runner:
+                output_path = transcode_browser_mp4(source_path)
+
+            try:
+                command = runner.call_args.args[0]
+                self.assertIn("libx264", command)
+                self.assertIn("yuv420p", command)
+                self.assertIn("+faststart", command)
+                self.assertEqual(Path(output_path).read_bytes(), b"h264-video")
+            finally:
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+
     def test_detection_mask_refinement_returns_bounded_foreground_polygon(self):
         import cv2
         import numpy as np

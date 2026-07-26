@@ -1829,10 +1829,18 @@
       overlayAnimationFrame = 0;
     }
 
-    playButton?.addEventListener("click", () => {
+    playButton?.addEventListener("click", async () => {
       if (video.paused) {
-        video.play();
-        playButton.textContent = "Pause";
+        try {
+          await video.play();
+          if (mediaStatus) mediaStatus.hidden = true;
+        } catch (error) {
+          if (mediaStatus) {
+            mediaStatus.textContent = "Playback could not start. The video may use an unsupported codec; download it or reanalyze it to create a compatible MP4.";
+            mediaStatus.hidden = false;
+          }
+          playButton.textContent = "Play";
+        }
       } else {
         video.pause();
         playButton.textContent = "Play";
@@ -1894,8 +1902,15 @@
       arrangeTimelineMarkers();
       renderOverlay();
     });
+    video.addEventListener("canplay", () => {
+      if (mediaStatus) mediaStatus.hidden = true;
+    });
     video.addEventListener("error", () => {
-      if (mediaStatus) mediaStatus.hidden = false;
+      if (mediaStatus) {
+        mediaStatus.textContent = "The video could not be loaded. Download it below or reanalyze it to create a browser-compatible MP4.";
+        mediaStatus.hidden = false;
+      }
+      if (playButton) playButton.textContent = "Play";
     });
     video.addEventListener("pause", () => {
       stopOverlayAnimation();
