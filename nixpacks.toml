@@ -2,6 +2,8 @@
 NIXPACKS_PYTHON_VERSION = "3.12"
 PYTHONDONTWRITEBYTECODE = "1"
 PYTHONUNBUFFERED = "1"
+ALLOW_DETECTION_MODE = "true"
+AUTO_REGISTER_BUNDLED_MODEL = "true"
 
 [phases.setup]
 aptPkgs = ["...", "curl", "wget", "ffmpeg", "libglib2.0-0"]

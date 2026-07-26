@@ -23,6 +23,10 @@ python manage.py migrate --noinput
 python manage.py createcachetable "${DJANGO_CACHE_TABLE:-roadvision_cache}"
 python manage.py collectstatic --noinput
 
+if [[ "${AUTO_REGISTER_BUNDLED_MODEL:-true}" =~ ^(1|true|yes|on)$ ]]; then
+    python manage.py bootstrap_bundled_model
+fi
+
 python manage.py run_video_visualizer_analysis \
     --watch \
     --poll-interval "${ANALYSIS_POLL_INTERVAL:-2}" &

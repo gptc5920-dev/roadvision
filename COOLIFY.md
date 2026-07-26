@@ -34,6 +34,11 @@ The health check must use `/livez/`, not `/`. RoadVision permits loopback
 hostnames for Coolify's internal probe and exempts only the health endpoints
 from the production HTTPS redirect.
 
+On startup, RoadVision verifies the bundled model artifact against its pinned
+SHA-256 digest and idempotently registers it as the active standard detection
+model. Set `AUTO_REGISTER_BUNDLED_MODEL=false` only when model activation is
+managed separately.
+
 Leave these fields empty so `nixpacks.toml` remains the source of truth:
 
 - Install Command
