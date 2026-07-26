@@ -108,16 +108,6 @@ def liveness(request):
     return JsonResponse({"status": "alive"})
 
 
-def media_access(request):
-    """Authorize Nginx internal subrequests before serving local media files."""
-    original_uri = request.headers.get("X-Original-URI", "")
-    original_path = urlparse(original_uri).path
-    safe_path = original_path.startswith(settings.MEDIA_URL) and ".." not in original_path.split("/")
-    if request.user.is_authenticated and is_staff_role(request.user) and safe_path:
-        return HttpResponse(status=204)
-    return HttpResponse(status=403)
-
-
 def auth_page(request):
     if request.user.is_authenticated and is_staff_role(request.user):
         return redirect("admin_video_analyzer")

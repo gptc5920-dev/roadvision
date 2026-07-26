@@ -1,14 +1,14 @@
-# Production uses the supported Django 5.2 LTS and MariaDB 10.11 lines.
+# Nixpacks production uses Django 5.2 LTS and a separate MariaDB 10.11 resource.
 --extra-index-url https://download.pytorch.org/whl/cpu
 
 Django==5.2.15
-mysqlclient==2.2.8
+PyMySQL==1.2.0
 django-storages[s3]==1.14.6
 whitenoise==6.12.0
 python-dotenv==1.0.0
 opencv-python-headless==4.13.0.92
 Pillow==12.0.0
-torch==2.13.0+cpu; platform_system == "Linux"
-torchvision==0.28.0+cpu; platform_system == "Linux"
+torch==2.13.0+cpu
+torchvision==0.28.0+cpu
 ultralytics-opencv-headless==8.4.90
 gunicorn==26.0.0

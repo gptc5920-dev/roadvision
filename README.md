@@ -126,9 +126,10 @@ The migration `0015_unify_legacy_analyses` exposes old `VideoAnalysis`/`Detectio
 - Tests: `python manage.py test`
 - Read-only concurrency smoke check: `python manage.py roadvision_load_check --requests 50 --concurrency 5`
 
-For production, run the web and worker processes separately, enable HTTPS, configure a strong `DJANGO_SECRET_KEY`, use restricted MySQL credentials, rotate the default account, configure centralized logs, and use durable object storage with retention policies.
+For production, enable HTTPS, configure a strong `DJANGO_SECRET_KEY`, use
+restricted MySQL credentials, rotate the default account, configure centralized
+logs, and use durable object storage with retention policies.
 
-For Coolify, use [COOLIFY.md](COOLIFY.md) and
-`docker-compose.coolify.yml`. The standalone container deployment, backup, TLS,
-worker, model-registration, and rollback procedure is in
-[DEPLOYMENT.md](DEPLOYMENT.md).
+The supported Coolify deployment uses Nixpacks. Follow
+[COOLIFY.md](COOLIFY.md); `nixpacks.toml` and
+`deploy/start-nixpacks.sh` define the build and combined web/analysis process.
