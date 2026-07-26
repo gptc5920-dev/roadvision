@@ -87,6 +87,7 @@ class FleetCameraAnalyzerTests(TestCase):
         self.assertContains(response, "fleet-live-indicator")
         self.assertContains(response, "Available camera")
         self.assertContains(response, 'class="fleet-camera-source"')
+        self.assertContains(response, 'class="fleet-camera-flip"')
         self.assertContains(response, "Send captured clip")
         self.assertContains(response, 'data-fleet-capture', html=False)
 

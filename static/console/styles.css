@@ -3128,8 +3128,13 @@ svg {
 
 .webcam-recorder div {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+}
+
+.webcam-recorder video.is-user-facing,
+.fleet-capture-preview.is-user-facing {
+  transform: scaleX(-1);
 }
 
 .webcam-recorder button {

@@ -62,6 +62,7 @@ class AnalyzerSettingsTests(TestCase):
         self.assertContains(analyzer, 'id="visualizer-upload-form"')
         self.assertContains(analyzer, 'id="processing-modal"')
         self.assertContains(analyzer, 'id="analysis-ready-notification"')
+        self.assertContains(analyzer, 'id="webcam-flip"')
         self.assertNotContains(analyzer, "Model and Analysis Settings")
         self.assertNotContains(analyzer, "Confidence threshold")
         self.assertContains(settings_page, "Model and Analysis Settings")

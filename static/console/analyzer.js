@@ -847,34 +847,135 @@
   initDatasetUpload();
   initDatasetAnnotator();
 
+  function inferredFacingMode(label, fallback = "environment") {
+    const normalized = String(label || "").toLowerCase();
+    if (/(front|user|facetime|selfie)/.test(normalized)) return "user";
+    if (/(back|rear|environment|world)/.test(normalized)) return "environment";
+    return fallback;
+  }
+
+  function updateFacingControl(preview, flipButton, facingMode) {
+    const isFrontCamera = facingMode === "user";
+    preview.classList.toggle("is-user-facing", isFrontCamera);
+    flipButton.textContent = isFrontCamera ? "Use back camera" : "Use front camera";
+    flipButton.setAttribute(
+      "aria-label",
+      isFrontCamera ? "Switch to back camera" : "Switch to front camera"
+    );
+  }
+
   function initWebcamRecorder() {
     const preview = document.getElementById("webcam-preview");
     const startButton = document.getElementById("webcam-start");
+    const flipButton = document.getElementById("webcam-flip");
     const recordButton = document.getElementById("webcam-record");
     const stopButton = document.getElementById("webcam-stop");
     const status = document.getElementById("webcam-status");
     const fileInput = document.getElementById("id_video");
-    if (!preview || !startButton || !recordButton || !stopButton || !fileInput) return;
+    if (!preview || !startButton || !flipButton || !recordButton || !stopButton || !fileInput) return;
 
     let stream = null;
     let recorder = null;
     let chunks = [];
+    let currentFacingMode = "environment";
 
     function setStatus(message) {
       if (status) status.textContent = message;
     }
 
-    startButton.addEventListener("click", async () => {
+    function releaseCamera() {
+      stream?.getTracks().forEach((track) => track.stop());
+      stream = null;
+      preview.pause();
+      preview.srcObject = null;
+      preview.hidden = true;
+      preview.classList.remove("is-user-facing");
+      flipButton.disabled = true;
+    }
+
+    async function openCamera(facingMode = currentFacingMode, deviceId = "") {
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+        setStatus("Camera recording is not supported by this browser. Use a current browser over HTTPS.");
+        return false;
+      }
+
+      releaseCamera();
+      startButton.disabled = true;
+      recordButton.disabled = true;
+      stopButton.disabled = true;
+      setStatus(`Opening the ${facingMode === "user" ? "front" : "back"} camera...`);
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        const videoConstraints = {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        };
+        if (deviceId) {
+          videoConstraints.deviceId = { exact: deviceId };
+        } else {
+          videoConstraints.facingMode = { ideal: facingMode };
+        }
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints,
+          audio: false,
+        });
         preview.srcObject = stream;
         preview.hidden = false;
         await preview.play();
+        const settings = stream.getVideoTracks()[0]?.getSettings?.() || {};
+        currentFacingMode = settings.facingMode || facingMode;
+        updateFacingControl(preview, flipButton, currentFacingMode);
         recordButton.disabled = false;
+        flipButton.disabled = false;
+        stopButton.disabled = false;
         startButton.disabled = true;
-        setStatus("Webcam ready. Record a road survey clip, then queue analysis.");
+        setStatus(
+          `${currentFacingMode === "user" ? "Front" : "Back"} camera ready. Record a road survey clip, then queue analysis.`
+        );
+        return true;
       } catch (error) {
-        setStatus("Webcam access is unavailable or permission was denied.");
+        releaseCamera();
+        startButton.disabled = false;
+        recordButton.disabled = true;
+        stopButton.disabled = true;
+        setStatus("Camera access is unavailable. Check browser permission and use HTTPS.");
+        return false;
+      }
+    }
+
+    startButton.addEventListener("click", () => {
+      openCamera(currentFacingMode);
+    });
+
+    flipButton.addEventListener("click", async () => {
+      if (!stream || (recorder && recorder.state !== "inactive")) return;
+      const previousFacingMode = currentFacingMode;
+      const previousDeviceId = stream.getVideoTracks()[0]?.getSettings?.().deviceId || "";
+      const requestedFacingMode = currentFacingMode === "user" ? "environment" : "user";
+      const opened = await openCamera(requestedFacingMode);
+      if (!opened) {
+        await openCamera(previousFacingMode);
+        setStatus("That camera could not be opened. The previous camera is active.");
+        return;
+      }
+
+      const openedDeviceId = stream?.getVideoTracks()[0]?.getSettings?.().deviceId || "";
+      if (
+        previousDeviceId
+        && openedDeviceId === previousDeviceId
+        && navigator.mediaDevices?.enumerateDevices
+      ) {
+        const devices = (await navigator.mediaDevices.enumerateDevices())
+          .filter((device) => device.kind === "videoinput");
+        const matchingDevice = devices.find((device) => (
+          device.deviceId !== previousDeviceId
+          && inferredFacingMode(device.label, "") === requestedFacingMode
+        ));
+        const fallbackDevice = devices.find((device) => device.deviceId !== previousDeviceId);
+        const alternative = matchingDevice || fallbackDevice;
+        if (alternative) {
+          const switched = await openCamera(requestedFacingMode, alternative.deviceId);
+          if (!switched) await openCamera(previousFacingMode, previousDeviceId);
+        }
       }
     });
 
@@ -895,20 +996,20 @@
       });
       recorder.start();
       recordButton.disabled = true;
+      flipButton.disabled = true;
       stopButton.disabled = false;
       setStatus("Recording webcam clip...");
     });
 
     stopButton.addEventListener("click", () => {
       if (recorder && recorder.state !== "inactive") recorder.stop();
-      stream?.getTracks().forEach((track) => track.stop());
-      stream = null;
-      preview.hidden = true;
-      preview.removeAttribute("srcObject");
+      releaseCamera();
       startButton.disabled = false;
       recordButton.disabled = true;
       stopButton.disabled = true;
     });
+
+    window.addEventListener("beforeunload", releaseCamera, { once: true });
   }
 
   function initFleetCameraCapture() {
@@ -932,19 +1033,21 @@
       const preview = form.querySelector(".fleet-capture-preview");
       const fileInput = form.querySelector(".fleet-capture-file");
       const startButton = form.querySelector(".fleet-camera-start");
+      const flipButton = form.querySelector(".fleet-camera-flip");
       const recordButton = form.querySelector(".fleet-camera-record");
       const stopButton = form.querySelector(".fleet-camera-stop");
       const submitButton = form.querySelector(".fleet-camera-submit");
       const cameraSelect = form.querySelector(".fleet-camera-source");
       const liveIndicator = form.querySelector(".fleet-live-indicator");
       const status = form.querySelector(".fleet-capture-status");
-      if (!preview || !fileInput || !startButton || !recordButton || !stopButton || !submitButton || !cameraSelect) return;
+      if (!preview || !fileInput || !startButton || !flipButton || !recordButton || !stopButton || !submitButton || !cameraSelect) return;
 
       let stream = null;
       let recorder = null;
       let chunks = [];
       let capturedFile = null;
       let recordingTimer = 0;
+      let currentFacingMode = "environment";
       const captureAllowed = !startButton.disabled;
 
       function setStatus(message) {
@@ -992,8 +1095,10 @@
         preview.pause();
         preview.srcObject = null;
         preview.hidden = true;
+        preview.classList.remove("is-user-facing");
         if (liveIndicator) liveIndicator.hidden = true;
         startButton.disabled = !captureAllowed;
+        flipButton.disabled = true;
         recordButton.disabled = true;
         stopButton.disabled = true;
         stopButton.textContent = "End live";
@@ -1011,15 +1116,16 @@
         setStatus("Live phone camera ended.");
       }
 
-      async function openCamera(deviceId = "") {
+      async function openCamera(deviceId = "", facingMode = currentFacingMode) {
         if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
           setStatus("Live capture is not supported by this browser. Use a current mobile or desktop browser over HTTPS.");
-          return;
+          return false;
         }
         releaseCamera();
         startButton.disabled = true;
+        flipButton.disabled = true;
         cameraSelect.disabled = true;
-        setStatus("Requesting camera access...");
+        setStatus(`Opening the ${facingMode === "user" ? "front" : "back"} camera...`);
         try {
           const videoConstraints = {
             width: { ideal: 1280 },
@@ -1028,7 +1134,7 @@
           if (deviceId) {
             videoConstraints.deviceId = { exact: deviceId };
           } else {
-            videoConstraints.facingMode = { ideal: "environment" };
+            videoConstraints.facingMode = { ideal: facingMode };
           }
           stream = await navigator.mediaDevices.getUserMedia({
             video: videoConstraints,
@@ -1038,31 +1144,71 @@
           preview.hidden = false;
           await preview.play();
           if (liveIndicator) liveIndicator.hidden = false;
-          const openedDeviceId = stream.getVideoTracks()[0]?.getSettings()?.deviceId || deviceId;
+          const trackSettings = stream.getVideoTracks()[0]?.getSettings?.() || {};
+          const openedDeviceId = trackSettings.deviceId || deviceId;
           await refreshCameraList(openedDeviceId).catch(() => {
             cameraSelect.replaceChildren(new Option("Current camera", openedDeviceId));
             cameraSelect.disabled = true;
           });
+          currentFacingMode = trackSettings.facingMode || inferredFacingMode(selectedCameraName(), facingMode);
+          updateFacingControl(preview, flipButton, currentFacingMode);
           startButton.disabled = true;
+          flipButton.disabled = false;
           recordButton.disabled = false;
           stopButton.disabled = false;
           stopButton.textContent = "End live";
           const cameraName = cameraSelect.value ? selectedCameraName() : "Camera";
           setStatus(`${cameraName} is live. Point it toward the road, then record a clip up to 45 seconds.`);
+          return true;
         } catch (error) {
           releaseCamera();
           await refreshCameraList().catch(() => {});
           setStatus("Camera access is unavailable. Check browser permission, camera availability, and use HTTPS or localhost.");
+          return false;
         }
       }
 
       startButton.addEventListener("click", () => {
-        openCamera(cameraSelect.value);
+        openCamera(cameraSelect.value, currentFacingMode);
+      });
+
+      flipButton.addEventListener("click", async () => {
+        if (!stream || (recorder && recorder.state !== "inactive")) return;
+        const previousFacingMode = currentFacingMode;
+        const previousDeviceId = stream.getVideoTracks()[0]?.getSettings?.().deviceId || "";
+        const requestedFacingMode = currentFacingMode === "user" ? "environment" : "user";
+        const opened = await openCamera("", requestedFacingMode);
+        if (!opened) {
+          await openCamera(previousDeviceId, previousFacingMode);
+          setStatus("That camera could not be opened. The previous camera is active.");
+          return;
+        }
+
+        const openedDeviceId = stream?.getVideoTracks()[0]?.getSettings?.().deviceId || "";
+        if (
+          previousDeviceId
+          && openedDeviceId === previousDeviceId
+          && navigator.mediaDevices?.enumerateDevices
+        ) {
+          const devices = (await navigator.mediaDevices.enumerateDevices())
+            .filter((device) => device.kind === "videoinput");
+          const matchingDevice = devices.find((device) => (
+            device.deviceId !== previousDeviceId
+            && inferredFacingMode(device.label, "") === requestedFacingMode
+          ));
+          const fallbackDevice = devices.find((device) => device.deviceId !== previousDeviceId);
+          const alternative = matchingDevice || fallbackDevice;
+          if (alternative) {
+            const switched = await openCamera(alternative.deviceId, requestedFacingMode);
+            if (!switched) await openCamera(previousDeviceId, previousFacingMode);
+          }
+        }
       });
 
       cameraSelect.addEventListener("change", () => {
+        currentFacingMode = inferredFacingMode(selectedCameraName(), currentFacingMode);
         if (stream && (!recorder || recorder.state === "inactive")) {
-          openCamera(cameraSelect.value);
+          openCamera(cameraSelect.value, currentFacingMode);
         } else {
           setStatus(`${selectedCameraName()} selected. Start the live camera to open the preview.`);
         }
@@ -1117,6 +1263,7 @@
         }, { once: true });
         recorder.start(1000);
         recordButton.disabled = true;
+        flipButton.disabled = true;
         stopButton.disabled = false;
         stopButton.textContent = "Stop recording";
         cameraSelect.disabled = true;
