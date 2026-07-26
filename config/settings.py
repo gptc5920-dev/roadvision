@@ -71,6 +71,12 @@ if IS_PRODUCTION and (not ALLOWED_HOSTS or "*" in ALLOWED_HOSTS):
         "DJANGO_ALLOWED_HOSTS must contain explicit production hostnames."
     )
 
+# Coolify performs container health checks over the loopback interface. Keep
+# these narrowly scoped internal hosts available without allowing a wildcard.
+for internal_host in ("localhost", "127.0.0.1", "[::1]"):
+    if internal_host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(internal_host)
+
 CSRF_TRUSTED_ORIGINS = env_list(
     "DJANGO_CSRF_TRUSTED_ORIGINS",
 )
@@ -568,6 +574,7 @@ CSRF_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = env_bool("DJANGO_SECURE_COOKIES", ENVIRONMENT == "production")
 CSRF_COOKIE_SECURE = SESSION_COOKIE_SECURE
 SECURE_SSL_REDIRECT = env_bool("DJANGO_SECURE_SSL_REDIRECT", ENVIRONMENT == "production")
+SECURE_REDIRECT_EXEMPT = [r"^livez/$", r"^healthz/$"]
 SECURE_HSTS_SECONDS = int(os.environ.get("DJANGO_HSTS_SECONDS", "31536000" if ENVIRONMENT == "production" else "0"))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("DJANGO_HSTS_INCLUDE_SUBDOMAINS", ENVIRONMENT == "production")
 SECURE_HSTS_PRELOAD = env_bool("DJANGO_HSTS_PRELOAD", False)

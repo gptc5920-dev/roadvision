@@ -55,6 +55,17 @@ class SignInTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "alive"})
 
+    @override_settings(
+        ALLOWED_HOSTS=["localhost"],
+        SECURE_SSL_REDIRECT=True,
+        SECURE_REDIRECT_EXEMPT=[r"^livez/$"],
+    )
+    def test_internal_liveness_probe_bypasses_https_redirect(self):
+        response = self.client.get("/livez/", HTTP_HOST="localhost:8000")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "alive"})
+
     def test_authenticated_console_includes_responsive_navigation_shell(self):
         self.user.console_role.role = "engineer"
         self.user.console_role.save(update_fields=["role"])

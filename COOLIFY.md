@@ -30,6 +30,10 @@ Port Exposes: 8000
 Health Check Path: /livez/
 ```
 
+The health check must use `/livez/`, not `/`. RoadVision permits loopback
+hostnames for Coolify's internal probe and exempts only the health endpoints
+from the production HTTPS redirect.
+
 Leave these fields empty so `nixpacks.toml` remains the source of truth:
 
 - Install Command
