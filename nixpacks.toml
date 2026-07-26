@@ -4,7 +4,7 @@ PYTHONDONTWRITEBYTECODE = "1"
 PYTHONUNBUFFERED = "1"
 
 [phases.setup]
-aptPkgs = ["ffmpeg", "libglib2.0-0"]
+aptPkgs = ["...", "curl", "wget", "ffmpeg", "libglib2.0-0"]
 
 [start]
 cmd = "bash deploy/start-nixpacks.sh"
