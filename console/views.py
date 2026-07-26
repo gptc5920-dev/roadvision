@@ -48,6 +48,7 @@ from .forms import (
     VideoVisualizerUploadForm,
 )
 from .ml import run_analysis
+from .live_detection import LiveDetectionBusy, LiveDetectionError, detect_live_frame
 from .readiness import dataset_readiness, model_readiness, training_dataset_manifest
 from .segmentation import draw_mask_overlay, estimate_detection_mask, pixel_polygon
 from .storage_paths import materialized_field_file, resolve_model_artifact
@@ -2584,6 +2585,50 @@ def video_visualizer_status(request, analysis_id):
             "error_message": analysis.error_message,
         }
     )
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@staff_required
+def live_camera_detection(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST a camera frame for live detection."}, status=405)
+
+    frame = request.FILES.get("frame")
+    if not frame:
+        return JsonResponse({"error": "A camera frame is required."}, status=400)
+    if frame.size > settings.LIVE_DETECTION_MAX_BYTES:
+        return JsonResponse({"error": "The camera frame is too large."}, status=413)
+    if frame.content_type and not frame.content_type.startswith("image/"):
+        return JsonResponse({"error": "The live frame must be an image."}, status=400)
+
+    configuration = analyzer_configuration()
+    try:
+        confidence_threshold = int(
+            request.POST.get("confidence_threshold") or configuration.confidence_threshold
+        )
+    except (TypeError, ValueError):
+        confidence_threshold = configuration.confidence_threshold
+    confidence_threshold = max(20, min(90, confidence_threshold))
+    frame_bytes = frame.read(settings.LIVE_DETECTION_MAX_BYTES + 1)
+    if len(frame_bytes) > settings.LIVE_DETECTION_MAX_BYTES:
+        return JsonResponse({"error": "The camera frame is too large."}, status=413)
+
+    try:
+        payload = detect_live_frame(frame_bytes, configuration, confidence_threshold)
+    except LiveDetectionBusy as exc:
+        return JsonResponse(
+            {
+                "error": str(exc),
+                "retry_after_ms": settings.LIVE_DETECTION_FRAME_INTERVAL_MS,
+            },
+            status=429,
+        )
+    except LiveDetectionError as exc:
+        return JsonResponse({"error": str(exc)}, status=503)
+
+    payload["confidence_threshold"] = confidence_threshold
+    response = JsonResponse(payload)
     response["Cache-Control"] = "no-store"
     return response
 

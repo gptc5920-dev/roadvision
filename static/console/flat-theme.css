@@ -654,6 +654,23 @@ tbody tr:hover td {
   border-color: var(--flat-nav-hover);
 }
 
+.webcam-recorder button.is-live,
+.webcam-recorder button.is-live:hover {
+  color: #ffffff;
+  background: #dc2626;
+  border-color: #b91c1c;
+}
+
+.webcam-live-metrics {
+  color: var(--flat-ink);
+  background: var(--flat-alt);
+  border: 1px solid var(--flat-border);
+}
+
+.webcam-live-metrics strong {
+  color: var(--flat-orange-dark);
+}
+
 .restart-analysis-button,
 .inline-form .restart-analysis-button {
   color: #9a3412;

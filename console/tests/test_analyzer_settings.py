@@ -107,6 +107,13 @@ class AnalyzerSettingsTests(TestCase):
         self.assertContains(analyzer, 'role="progressbar"')
         self.assertContains(analyzer, 'id="analysis-ready-notification"')
         self.assertContains(analyzer, 'id="webcam-flip"')
+        self.assertContains(analyzer, 'id="open-live-camera"')
+        self.assertContains(analyzer, 'id="webcam-live-detect"')
+        self.assertContains(analyzer, 'id="webcam-live-overlay"')
+        self.assertContains(
+            analyzer,
+            'data-live-detection-url="/_authenticated/admin/video-analyzer/live-frame/"',
+        )
         self.assertNotContains(analyzer, "Model and Analysis Settings")
         self.assertNotContains(analyzer, "Confidence threshold")
         self.assertContains(settings_page, "Model and Analysis Settings")
@@ -132,6 +139,45 @@ class AnalyzerSettingsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["progress_percent"], 25)
         self.assertEqual(response.json()["remaining_percent"], 75)
+
+    @patch("console.views.detect_live_frame")
+    def test_phone_camera_frame_returns_live_detections(self, detector):
+        detector.return_value = {
+            "detections": [
+                {
+                    "label": "pothole",
+                    "confidence": 0.91,
+                    "bbox": {"x1": 0.1, "y1": 0.2, "x2": 0.4, "y2": 0.6},
+                    "segmentation_points": [],
+                }
+            ],
+            "total_detections": 1,
+            "inference_ms": 125,
+            "inference_fps": 8.0,
+            "frame_width": 640,
+            "frame_height": 360,
+            "model_task": "detect",
+            "recommended_interval_ms": 900,
+        }
+        frame_buffer = io.BytesIO()
+        Image.new("RGB", (640, 360), "gray").save(frame_buffer, format="JPEG")
+        response = self.client.post(
+            "/_authenticated/admin/video-analyzer/live-frame/",
+            {
+                "frame": SimpleUploadedFile(
+                    "phone-frame.jpg",
+                    frame_buffer.getvalue(),
+                    content_type="image/jpeg",
+                ),
+                "confidence_threshold": "35",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["total_detections"], 1)
+        self.assertEqual(response.json()["confidence_threshold"], 35)
+        self.assertEqual(response["Cache-Control"], "no-store")
+        detector.assert_called_once()
 
     def test_new_analysis_copies_saved_configuration(self):
         form = VideoVisualizerUploadForm(

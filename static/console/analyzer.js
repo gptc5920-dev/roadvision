@@ -865,43 +865,98 @@
   }
 
   function initWebcamRecorder() {
+    const recorderContainer = document.querySelector(".webcam-recorder[data-live-detection-url]");
+    const stage = document.getElementById("webcam-live-stage");
     const preview = document.getElementById("webcam-preview");
+    const overlay = document.getElementById("webcam-live-overlay");
+    const liveBadge = document.getElementById("webcam-live-badge");
+    const liveMetrics = document.getElementById("webcam-live-metrics");
+    const liveCount = document.getElementById("webcam-live-count");
+    const liveSpeed = document.getElementById("webcam-live-speed");
     const startButton = document.getElementById("webcam-start");
     const flipButton = document.getElementById("webcam-flip");
+    const liveButton = document.getElementById("webcam-live-detect");
     const recordButton = document.getElementById("webcam-record");
     const stopButton = document.getElementById("webcam-stop");
     const status = document.getElementById("webcam-status");
     const fileInput = document.getElementById("id_video");
-    if (!preview || !startButton || !flipButton || !recordButton || !stopButton || !fileInput) return;
+    const uploadForm = document.getElementById("visualizer-upload-form");
+    const sensitivity = document.getElementById("id_confidence_threshold");
+    if (
+      !recorderContainer
+      || !stage
+      || !preview
+      || !overlay
+      || !startButton
+      || !flipButton
+      || !liveButton
+      || !recordButton
+      || !stopButton
+      || !fileInput
+      || !uploadForm
+    ) return;
 
     let stream = null;
     let recorder = null;
     let chunks = [];
     let currentFacingMode = "environment";
+    let liveDetectionActive = false;
+    let liveDetectionTimer = 0;
+    let liveDetectionRequest = null;
+    const captureCanvas = document.createElement("canvas");
+    const captureContext = captureCanvas.getContext("2d", { alpha: false });
+    const overlayContext = overlay.getContext("2d");
 
     function setStatus(message) {
       if (status) status.textContent = message;
     }
 
+    function clearLiveOverlay() {
+      overlayContext?.clearRect(0, 0, overlay.width, overlay.height);
+    }
+
+    function stopLiveDetection(showMessage = true) {
+      liveDetectionActive = false;
+      if (liveDetectionTimer) window.clearTimeout(liveDetectionTimer);
+      liveDetectionTimer = 0;
+      liveDetectionRequest?.abort();
+      liveDetectionRequest = null;
+      clearLiveOverlay();
+      overlay.hidden = true;
+      if (liveBadge) liveBadge.hidden = true;
+      if (liveMetrics) liveMetrics.hidden = true;
+      liveButton.textContent = "Start live detection";
+      liveButton.classList.remove("is-live");
+      liveButton.disabled = !stream;
+      recordButton.disabled = !stream || typeof MediaRecorder === "undefined";
+      flipButton.disabled = !stream || Boolean(recorder && recorder.state !== "inactive");
+      if (showMessage && stream) {
+        setStatus("Live detection stopped. The camera preview remains open.");
+      }
+    }
+
     function releaseCamera() {
+      stopLiveDetection(false);
       stream?.getTracks().forEach((track) => track.stop());
       stream = null;
       preview.pause();
       preview.srcObject = null;
-      preview.hidden = true;
+      stage.hidden = true;
       preview.classList.remove("is-user-facing");
       flipButton.disabled = true;
+      liveButton.disabled = true;
     }
 
     async function openCamera(facingMode = currentFacingMode, deviceId = "") {
-      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-        setStatus("Camera recording is not supported by this browser. Use a current browser over HTTPS.");
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setStatus("Camera access is not supported by this browser. Use a current browser over HTTPS.");
         return false;
       }
 
       releaseCamera();
       startButton.disabled = true;
       recordButton.disabled = true;
+      liveButton.disabled = true;
       stopButton.disabled = true;
       setStatus(`Opening the ${facingMode === "user" ? "front" : "back"} camera...`);
       try {
@@ -919,23 +974,25 @@
           audio: false,
         });
         preview.srcObject = stream;
-        preview.hidden = false;
+        stage.hidden = false;
         await preview.play();
         const settings = stream.getVideoTracks()[0]?.getSettings?.() || {};
         currentFacingMode = settings.facingMode || facingMode;
         updateFacingControl(preview, flipButton, currentFacingMode);
-        recordButton.disabled = false;
+        recordButton.disabled = typeof MediaRecorder === "undefined";
+        liveButton.disabled = false;
         flipButton.disabled = false;
         stopButton.disabled = false;
         startButton.disabled = true;
         setStatus(
-          `${currentFacingMode === "user" ? "Front" : "Back"} camera ready. Record a road survey clip, then queue analysis.`
+          `${currentFacingMode === "user" ? "Front" : "Back"} camera ready. Start live detection or record a review clip.`
         );
         return true;
       } catch (error) {
         releaseCamera();
         startButton.disabled = false;
         recordButton.disabled = true;
+        liveButton.disabled = true;
         stopButton.disabled = true;
         setStatus("Camera access is unavailable. Check browser permission and use HTTPS.");
         return false;
@@ -948,12 +1005,15 @@
 
     flipButton.addEventListener("click", async () => {
       if (!stream || (recorder && recorder.state !== "inactive")) return;
+      const resumeLiveDetection = liveDetectionActive;
+      if (resumeLiveDetection) stopLiveDetection(false);
       const previousFacingMode = currentFacingMode;
       const previousDeviceId = stream.getVideoTracks()[0]?.getSettings?.().deviceId || "";
       const requestedFacingMode = currentFacingMode === "user" ? "environment" : "user";
       const opened = await openCamera(requestedFacingMode);
       if (!opened) {
         await openCamera(previousFacingMode);
+        if (resumeLiveDetection && stream) startLiveDetection();
         setStatus("That camera could not be opened. The previous camera is active.");
         return;
       }
@@ -977,12 +1037,167 @@
           if (!switched) await openCamera(previousFacingMode, previousDeviceId);
         }
       }
+      if (resumeLiveDetection && stream) startLiveDetection();
+    });
+
+    function drawLiveDetections(detections) {
+      if (!overlayContext || !preview.videoWidth || !preview.videoHeight) return;
+      overlay.width = preview.videoWidth;
+      overlay.height = preview.videoHeight;
+      clearLiveOverlay();
+      const mirrored = currentFacingMode === "user";
+
+      detections.forEach((detection) => {
+        const box = detection.bbox || {};
+        const rawX1 = Number(box.x1 || 0);
+        const rawX2 = Number(box.x2 || 0);
+        const x1 = (mirrored ? 1 - rawX2 : rawX1) * overlay.width;
+        const x2 = (mirrored ? 1 - rawX1 : rawX2) * overlay.width;
+        const y1 = Number(box.y1 || 0) * overlay.height;
+        const y2 = Number(box.y2 || 0) * overlay.height;
+        const polygon = Array.isArray(detection.segmentation_points)
+          ? detection.segmentation_points
+          : [];
+        const label = detection.label === "road_damage" ? "Road damage" : "Pothole";
+        const confidence = Math.round(Number(detection.confidence || 0) * 100);
+        const color = detection.label === "road_damage" ? "#2563eb" : "#f97316";
+
+        if (polygon.length >= 3) {
+          overlayContext.beginPath();
+          polygon.forEach((point, index) => {
+            const pointX = (mirrored ? 1 - Number(point[0]) : Number(point[0])) * overlay.width;
+            const pointY = Number(point[1]) * overlay.height;
+            if (index === 0) overlayContext.moveTo(pointX, pointY);
+            else overlayContext.lineTo(pointX, pointY);
+          });
+          overlayContext.closePath();
+          overlayContext.fillStyle = detection.label === "road_damage"
+            ? "rgba(37, 99, 235, 0.25)"
+            : "rgba(249, 115, 22, 0.28)";
+          overlayContext.fill();
+          overlayContext.strokeStyle = color;
+          overlayContext.lineWidth = Math.max(2, overlay.width / 320);
+          overlayContext.stroke();
+        }
+
+        overlayContext.strokeStyle = color;
+        overlayContext.lineWidth = Math.max(2, overlay.width / 320);
+        overlayContext.strokeRect(x1, y1, Math.max(1, x2 - x1), Math.max(1, y2 - y1));
+        const text = `${label} ${confidence}%`;
+        overlayContext.font = `700 ${Math.max(13, Math.round(overlay.width / 48))}px system-ui, sans-serif`;
+        const textWidth = overlayContext.measureText(text).width;
+        const textHeight = Math.max(22, Math.round(overlay.width / 34));
+        const textTop = Math.max(0, y1 - textHeight);
+        overlayContext.fillStyle = color;
+        overlayContext.fillRect(x1, textTop, textWidth + 12, textHeight);
+        overlayContext.fillStyle = "#ffffff";
+        overlayContext.fillText(text, x1 + 6, textTop + textHeight - 6);
+      });
+    }
+
+    function captureFrameBlob() {
+      if (!captureContext || !preview.videoWidth || !preview.videoHeight) {
+        return Promise.resolve(null);
+      }
+      const width = Math.min(640, preview.videoWidth);
+      const height = Math.max(1, Math.round((preview.videoHeight / preview.videoWidth) * width));
+      captureCanvas.width = width;
+      captureCanvas.height = height;
+      captureContext.drawImage(preview, 0, 0, width, height);
+      return new Promise((resolve) => captureCanvas.toBlob(resolve, "image/jpeg", 0.76));
+    }
+
+    async function processLiveFrame() {
+      if (!liveDetectionActive || !stream) return;
+      const cycleStartedAt = performance.now();
+      try {
+        const frame = await captureFrameBlob();
+        if (!frame) throw new Error("Waiting for a readable camera frame.");
+        const data = new FormData();
+        data.append("frame", frame, "live-camera-frame.jpg");
+        data.append("confidence_threshold", sensitivity?.value || "50");
+        const csrfToken = uploadForm.querySelector('input[name="csrfmiddlewaretoken"]')?.value || "";
+        liveDetectionRequest = new AbortController();
+        const response = await fetch(recorderContainer.dataset.liveDetectionUrl, {
+          method: "POST",
+          body: data,
+          credentials: "same-origin",
+          headers: {
+            "X-CSRFToken": csrfToken,
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          signal: liveDetectionRequest.signal,
+          cache: "no-store",
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!liveDetectionActive) return;
+        if (response.status === 429) {
+          const retryAfter = Number(payload.retry_after_ms || 900);
+          liveDetectionTimer = window.setTimeout(processLiveFrame, retryAfter);
+          return;
+        }
+        if (!response.ok) throw new Error(payload.error || `Live detection failed with status ${response.status}.`);
+        drawLiveDetections(payload.detections || []);
+        const total = Number(payload.total_detections || 0);
+        if (liveCount) liveCount.textContent = `${total} ${total === 1 ? "defect" : "defects"}`;
+        if (liveSpeed) {
+          liveSpeed.textContent = `${Number(payload.inference_ms || 0).toLocaleString()} ms inference · ${Number(payload.inference_fps || 0).toFixed(1)} FPS`;
+        }
+        setStatus(
+          total
+            ? `Live screening found ${total} ${total === 1 ? "road defect" : "road defects"} in the current frame.`
+            : "Live screening is active. No road defects are above the selected sensitivity in the current frame."
+        );
+        const cycleElapsed = performance.now() - cycleStartedAt;
+        const interval = Number(payload.recommended_interval_ms || 900);
+        liveDetectionTimer = window.setTimeout(processLiveFrame, Math.max(100, interval - cycleElapsed));
+      } catch (error) {
+        if (!liveDetectionActive || error.name === "AbortError") return;
+        stopLiveDetection(false);
+        setStatus(error.message || "Live detection stopped because the frame could not be processed.");
+      } finally {
+        liveDetectionRequest = null;
+      }
+    }
+
+    function startLiveDetection() {
+      if (!stream || liveDetectionActive) return;
+      liveDetectionActive = true;
+      overlay.hidden = false;
+      if (liveBadge) liveBadge.hidden = false;
+      if (liveMetrics) liveMetrics.hidden = false;
+      if (liveCount) liveCount.textContent = "0 defects";
+      if (liveSpeed) liveSpeed.textContent = "Analyzing first frame";
+      liveButton.textContent = "Stop live detection";
+      liveButton.classList.add("is-live");
+      recordButton.disabled = true;
+      setStatus("Live detection is starting. Keep the road surface centered in the camera.");
+      processLiveFrame();
+    }
+
+    liveButton.addEventListener("click", async () => {
+      if (liveDetectionActive) {
+        stopLiveDetection();
+        return;
+      }
+      if (!stream && !(await openCamera(currentFacingMode))) return;
+      startLiveDetection();
     });
 
     recordButton.addEventListener("click", () => {
       if (!stream) return;
+      if (liveDetectionActive) stopLiveDetection(false);
+      if (typeof MediaRecorder === "undefined") {
+        setStatus("Video recording is unavailable in this browser, but live detection can still be used.");
+        return;
+      }
       chunks = [];
-      recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+      try {
+        recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+      } catch (error) {
+        setStatus("This browser could not start a WEBM recording. Live detection remains available.");
+        return;
+      }
       recorder.addEventListener("dataavailable", (event) => {
         if (event.data && event.data.size) chunks.push(event.data);
       });
@@ -996,6 +1211,7 @@
       });
       recorder.start();
       recordButton.disabled = true;
+      liveButton.disabled = true;
       flipButton.disabled = true;
       stopButton.disabled = false;
       setStatus("Recording webcam clip...");
@@ -1006,6 +1222,7 @@
       releaseCamera();
       startButton.disabled = false;
       recordButton.disabled = true;
+      liveButton.disabled = true;
       stopButton.disabled = true;
     });
 
@@ -1320,6 +1537,7 @@
     const uploadModal = document.getElementById("upload-analysis-modal");
     const uploadDialog = uploadModal?.querySelector(".analyzer-modal-dialog");
     const openUpload = document.getElementById("open-upload-modal");
+    const openLiveCamera = document.getElementById("open-live-camera");
     const closeUpload = document.getElementById("close-upload-modal");
     const uploadForm = document.getElementById("visualizer-upload-form");
     const uploadSubmit = document.getElementById("submit-video-analysis");
@@ -1531,6 +1749,10 @@
     }
 
     openUpload.addEventListener("click", showUploadModal);
+    openLiveCamera?.addEventListener("click", () => {
+      showUploadModal();
+      window.requestAnimationFrame(() => document.getElementById("webcam-start")?.focus());
+    });
     closeUpload?.addEventListener("click", () => hideUploadModal());
     uploadModal.querySelectorAll("[data-close-upload-modal]").forEach((control) => {
       control.addEventListener("click", () => hideUploadModal());
@@ -1570,6 +1792,10 @@
       pollAnalysisStatus();
       statusPoll = window.setInterval(pollAnalysisStatus, 2000);
       window.addEventListener("beforeunload", () => window.clearInterval(statusPoll), { once: true });
+    }
+    if (new URLSearchParams(window.location.search).get("live_camera") === "1") {
+      showUploadModal();
+      window.requestAnimationFrame(() => document.getElementById("webcam-start")?.focus());
     }
   }
 

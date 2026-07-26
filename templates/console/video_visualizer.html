@@ -18,6 +18,15 @@
       >
         Upload and Analyze
       </button>
+      <button
+        type="button"
+        class="primary-mini module-action live-camera-trigger"
+        id="open-live-camera"
+        aria-haspopup="dialog"
+        aria-controls="upload-analysis-modal"
+      >
+        Live Camera Detect
+      </button>
       {% if analysis %}
         <a class="primary-mini module-action" href="{% url 'admin_video_visualizer_report' analysis.pk %}">Inspection report</a>
         <a class="primary-mini module-action" href="{% url 'admin_detections' %}?analysis={{ analysis.pk }}">Defect Inventory</a>
@@ -417,15 +426,28 @@
           <p class="muted analyzer-upload-wide">Road-plane calibration and mask-derived dimensions become available with a segmentation model.</p>
         {% endif %}
       </div>
-      <div class="webcam-recorder">
-        <video id="webcam-preview" playsinline muted hidden></video>
-        <div>
+      <div
+        class="webcam-recorder"
+        data-live-detection-url="{% url 'admin_live_camera_detection' %}"
+      >
+        <div class="webcam-live-stage" id="webcam-live-stage" hidden>
+          <video id="webcam-preview" playsinline muted></video>
+          <canvas id="webcam-live-overlay" aria-hidden="true" hidden></canvas>
+          <span class="webcam-live-badge" id="webcam-live-badge" hidden>LIVE DETECTION</span>
+        </div>
+        <div class="webcam-recorder-controls">
           <button type="button" id="webcam-start">Start webcam</button>
           <button type="button" id="webcam-flip" disabled>Use front camera</button>
+          <button type="button" id="webcam-live-detect" disabled>Start live detection</button>
           <button type="button" id="webcam-record" disabled>Record</button>
           <button type="button" id="webcam-stop" disabled>Stop</button>
         </div>
-        <span id="webcam-status">Webcam recordings are saved as WEBM for analysis.</span>
+        <div class="webcam-live-metrics" id="webcam-live-metrics" hidden>
+          <strong id="webcam-live-count">0 defects</strong>
+          <span id="webcam-live-speed">Waiting for a frame</span>
+        </div>
+        <span id="webcam-status">Use a phone, tablet, laptop, or connected USB camera for live screening. Network dashcams use Continuous Detection in Fleet Cams.</span>
+        <small>Live browser detections are previews and are not saved. Record a clip when you need a reviewable analysis.</small>
       </div>
       <footer class="analyzer-modal-actions">
         <button type="button" class="secondary-action" data-close-upload-modal>Cancel</button>

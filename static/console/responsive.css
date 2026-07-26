@@ -1205,7 +1205,7 @@ input[type="radio"] {
     border-radius: 7px;
   }
 
-  .webcam-recorder div {
+  .webcam-recorder-controls {
     grid-template-columns: 1fr;
   }
 

@@ -409,6 +409,21 @@ CONTINUOUS_STREAM_RECONNECT_SECONDS = max(
     ),
 )
 
+LIVE_DETECTION_MAX_BYTES = max(
+    256 * 1024,
+    int(os.environ.get("LIVE_DETECTION_MAX_BYTES", str(2 * 1024 * 1024))),
+)
+
+LIVE_DETECTION_MAX_DIMENSION = max(
+    640,
+    min(1920, int(os.environ.get("LIVE_DETECTION_MAX_DIMENSION", "1280"))),
+)
+
+LIVE_DETECTION_FRAME_INTERVAL_MS = max(
+    500,
+    int(os.environ.get("LIVE_DETECTION_FRAME_INTERVAL_MS", "900")),
+)
+
 
 # =============================================================================
 # DATASET SETTINGS

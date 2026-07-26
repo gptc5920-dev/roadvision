@@ -3196,17 +3196,58 @@ svg {
   border-radius: 8px;
 }
 
-.webcam-recorder video {
+.webcam-live-stage {
+  position: relative;
+  display: grid;
+  overflow: hidden;
+  background: #02060a;
+  border-radius: 6px;
+}
+
+.webcam-live-stage[hidden] {
+  display: none;
+}
+
+.webcam-recorder video,
+.webcam-live-stage canvas {
+  grid-area: 1 / 1;
   width: 100%;
   aspect-ratio: 16 / 9;
+}
+
+.webcam-recorder video {
   object-fit: cover;
   background: #02060a;
   border-radius: 6px;
 }
 
-.webcam-recorder div {
+.webcam-live-stage canvas {
+  z-index: 2;
+  height: 100%;
+  pointer-events: none;
+}
+
+.webcam-live-stage canvas[hidden] {
+  display: none;
+}
+
+.webcam-live-badge {
+  position: absolute;
+  z-index: 3;
+  top: 10px;
+  left: 10px;
+  padding: 5px 8px;
+  color: #ffffff !important;
+  background: #dc2626;
+  border-radius: 5px;
+  font-size: 0.68rem !important;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.webcam-recorder-controls {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -3230,9 +3271,40 @@ svg {
   cursor: not-allowed;
 }
 
+.webcam-recorder button.is-live {
+  color: #ffffff;
+  background: #dc2626;
+  border-color: #dc2626;
+}
+
+.webcam-live-metrics {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  color: #dce6f2;
+  background: #111d2a;
+  border-radius: 6px;
+}
+
+.webcam-live-metrics[hidden] {
+  display: none;
+}
+
+.webcam-live-metrics strong {
+  color: #fb923c;
+}
+
 .webcam-recorder span {
   color: #8d9caf;
   font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.webcam-recorder small {
+  color: #64748b;
+  font-size: 0.72rem;
   line-height: 1.4;
 }
 

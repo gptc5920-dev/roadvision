@@ -393,7 +393,7 @@
         <div>
           <span class="hud-label">Fleet video intake</span>
           <h2>Continuous fleet pothole detection</h2>
-          <p>Run registered RTSP/HTTP dashcams continuously with annotated live frames, automatic reconnection, and operator-controlled stopping. Browser cameras can still capture review clips.</p>
+          <p>Run registered RTSP/HTTP dashcams continuously with annotated live frames, automatic reconnection, and operator-controlled stopping. Phone and browser cameras can run live screening from Video Analyzer.</p>
         </div>
         <a class="primary-mini module-action" href="{% url 'admin_video_analyzer_explicit' %}">Open Analyzer queue</a>
       </div>
@@ -486,6 +486,7 @@
               <input class="fleet-capture-file visually-hidden" type="file" name="video" accept="video/webm,video/mp4,video/quicktime" tabindex="-1">
               <h4>Phone / device live camera</h4>
               <p>Start a live preview from this phone, tablet, or laptop, choose the front or rear camera, then record a road clip for Analyzer.</p>
+              <a class="fleet-open-live" href="{% url 'admin_video_analyzer_explicit' %}?live_camera=1">Open phone live detector</a>
               <label>Available camera
                 <select class="fleet-camera-source" aria-label="Available camera for {{ device.name }}" disabled>
                   <option value="">Checking for cameras...</option>

@@ -110,6 +110,21 @@ Startup performs:
 Keep the application at one replica. The web server and inference worker share
 the same CPU and memory allocation in this Nixpacks layout.
 
+Browser live detection requires the normal HTTPS domain because phone and
+desktop browsers block camera access on insecure origins. The default live
+camera settings are conservative for a CPU deployment:
+
+```dotenv
+LIVE_DETECTION_FRAME_INTERVAL_MS=900
+LIVE_DETECTION_MAX_DIMENSION=1280
+```
+
+Use **Video Analyzer > Live Camera Detect** for phone, tablet, laptop, and USB
+cameras. Use **Fleet Cams > Continuous Detection** for network dashcams and IP
+cameras that expose an RTSP or HTTP stream. Private network stream URLs require
+`ALLOW_PRIVATE_STREAMS=true`; enable it only when the application network is
+trusted.
+
 ## 5. Verify
 
 After the application becomes healthy, open its terminal and run:
@@ -126,6 +141,9 @@ Then verify:
 - login works and default/development accounts are disabled;
 - a short video can be uploaded, queued, processed, and viewed;
 - application logs show the analysis worker claiming and completing the job;
+- phone camera permission works over HTTPS and Live Camera Detect draws current
+  detections;
+- a registered RTSP/HTTP test dashcam can start and stop from Fleet Cams;
 - media URLs are signed and the bucket is not public.
 
 ## 6. Operations
@@ -133,6 +151,7 @@ Then verify:
 Enable automated MariaDB backups in Coolify and versioning/lifecycle protection
 for the object-storage bucket. Restore-test both before production use.
 
-This CPU Nixpacks deployment supports queued video processing. It does not make
-full-rate 25–30 FPS live inference reliable. A genuinely real-time service
-requires a separately benchmarked GPU worker architecture.
+This CPU Nixpacks deployment supports queued video processing and controlled-rate
+live screening. It does not make full-rate 25–30 FPS inference reliable. A
+genuinely real-time service requires a separately benchmarked GPU worker
+architecture.
