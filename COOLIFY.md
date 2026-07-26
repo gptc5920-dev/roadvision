@@ -22,9 +22,15 @@ validated model artifact is bundled into the immutable application image.
 
 1. Push this repository, including the registered production model, to a
    private Git repository that Coolify can access.
-2. In Coolify, create a **Docker Compose** resource from that repository.
-3. Set the Compose file to `/docker-compose.coolify.yml`.
-4. Select the intended branch and server.
+2. In Coolify, create a Git-based application and change its build pack from
+   the default **Nixpacks** option to **Docker Compose**.
+3. Set **Base Directory** to `/`.
+4. Set **Docker Compose Location** to `/docker-compose.coolify.yml`.
+5. Select the intended branch and server.
+
+The deployment log must say that Coolify is loading a Docker Compose build. If
+it says `Generating nixpacks configuration`, stop: that resource is using the
+wrong build pack and will omit the database and analysis-worker services.
 
 Coolify detects all `${VARIABLE}` references in the Compose file. The
 `SERVICE_REALBASE64_64_DJANGO`, `SERVICE_PASSWORD_64_DBUSER`, and

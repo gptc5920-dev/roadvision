@@ -4,7 +4,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y build-essential default-libmysqlclient-dev pkg-config \
+    && apt-get install --no-install-recommends -y build-essential libmariadb-dev libmariadb-dev-compat pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build

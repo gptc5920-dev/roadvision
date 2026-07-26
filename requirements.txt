@@ -1,4 +1,6 @@
 # Production uses the supported Django 5.2 LTS and MariaDB 10.11 lines.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 Django==5.2.15
 mysqlclient==2.2.8
 django-storages[s3]==1.14.6
@@ -6,5 +8,7 @@ whitenoise==6.12.0
 python-dotenv==1.0.0
 opencv-python-headless==4.13.0.92
 Pillow==12.0.0
+torch==2.13.0+cpu; platform_system == "Linux"
+torchvision==0.28.0+cpu; platform_system == "Linux"
 ultralytics-opencv-headless==8.4.90
 gunicorn==26.0.0
