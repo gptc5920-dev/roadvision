@@ -476,14 +476,23 @@ def analysis_frame_detections(analysis):
     if not analysis:
         return []
     if analysis.frame_detections_artifact:
-        analysis.frame_detections_artifact.open("rb")
+        artifact = analysis.frame_detections_artifact
         try:
-            return json.loads(gzip.decompress(analysis.frame_detections_artifact.read()).decode("utf-8"))
-        except (OSError, ValueError, json.JSONDecodeError):
+            artifact.open("rb")
+            return json.loads(gzip.decompress(artifact.read()).decode("utf-8"))
+        except Exception:
+            logger.exception(
+                "Could not load detection data for video analysis %s from %s.",
+                analysis.pk,
+                getattr(artifact, "name", "unknown media"),
+            )
             return []
         finally:
-            analysis.frame_detections_artifact.close()
-    return analysis.frame_detections
+            try:
+                artifact.close()
+            except Exception:
+                pass
+    return analysis.frame_detections or []
 
 
 def start_analysis_worker(analysis_id):

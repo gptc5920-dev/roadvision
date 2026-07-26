@@ -2,6 +2,7 @@ import hashlib
 import io
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -20,7 +21,7 @@ from console.models import (
     VideoVisualizerAnalysis,
     VideoVisualizerStatus,
 )
-from console.views import safe_media_url, save_visualizer_video
+from console.views import analysis_frame_detections, safe_media_url, save_visualizer_video
 
 
 class AnalyzerSettingsTests(TestCase):
@@ -37,6 +38,27 @@ class AnalyzerSettingsTests(TestCase):
 
         with self.assertLogs("console.views", level="ERROR"):
             self.assertEqual(safe_media_url(BrokenMedia()), "")
+
+    def test_missing_detection_artifact_does_not_crash_the_analyzer(self):
+        class MissingArtifact:
+            name = "missing/detections.json.gz"
+
+            def __bool__(self):
+                return True
+
+            def open(self, _mode):
+                raise FileNotFoundError(self.name)
+
+            def close(self):
+                return None
+
+        analysis = SimpleNamespace(
+            pk=42,
+            frame_detections_artifact=MissingArtifact(),
+            frame_detections=[],
+        )
+        with self.assertLogs("console.views", level="ERROR"):
+            self.assertEqual(analysis_frame_detections(analysis), [])
 
     def setUp(self):
         self.user = get_user_model().objects.create_user(
