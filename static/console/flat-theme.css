@@ -1774,6 +1774,11 @@ tbody tr:hover td {
   background: linear-gradient(90deg, var(--flat-orange-dark), var(--flat-orange));
 }
 
+.processing-progress.is-determinate::before {
+  background-color: var(--flat-orange);
+  background-image: linear-gradient(90deg, var(--flat-orange-dark), var(--flat-orange));
+}
+
 .processing-percentage {
   color: var(--flat-muted);
 }

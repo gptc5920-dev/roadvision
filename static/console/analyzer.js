@@ -1444,6 +1444,7 @@
         if (summaryProgress) summaryProgress.textContent = "--";
         if (summaryRemaining) summaryRemaining.textContent = "Calculating";
         processingProgressBar?.classList.remove("is-determinate");
+        processingProgressBar?.style.removeProperty("--processing-progress-width");
         processingProgressBar?.removeAttribute("aria-valuenow");
         processingProgressBar?.setAttribute("aria-valuetext", "Progress is being calculated");
         processingProgress?.style.removeProperty("width");
@@ -1451,6 +1452,7 @@
       }
 
       processingProgressBar?.classList.add("is-determinate");
+      processingProgressBar?.style.setProperty("--processing-progress-width", `${completeValue}%`);
       processingProgressBar?.setAttribute("aria-valuenow", String(completeValue));
       processingProgressBar?.setAttribute(
         "aria-valuetext",

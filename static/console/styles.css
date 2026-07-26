@@ -2501,12 +2501,28 @@ svg {
 }
 
 .processing-progress {
+  position: relative;
+  isolation: isolate;
   width: 100%;
   height: 8px;
   margin: 2px 0 10px;
   overflow: hidden;
   background: #1e293b;
   border-radius: 999px;
+}
+
+.processing-progress.is-determinate::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0 auto 0 0;
+  width: var(--processing-progress-width, 0%);
+  content: "";
+  background-color: #f97316;
+  background-image: linear-gradient(90deg, #ea580c, #fb923c);
+  border-radius: inherit;
+  box-shadow: 0 0 10px rgba(249, 115, 22, 0.3);
+  transition: width 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: width;
 }
 
 .processing-percentage {
@@ -2529,6 +2545,7 @@ svg {
 
 .processing-progress span {
   position: relative;
+  z-index: 1;
   display: block;
   width: 32%;
   height: 100%;
@@ -2541,7 +2558,10 @@ svg {
 }
 
 .processing-progress.is-determinate span {
+  width: var(--processing-progress-width, 0%) !important;
   animation: none;
+  background: transparent !important;
+  transform: translateX(0) !important;
 }
 
 .processing-progress.is-determinate span::after {
