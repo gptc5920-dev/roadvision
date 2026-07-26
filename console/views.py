@@ -107,6 +107,25 @@ def safe_media_url(field_file):
         return ""
 
 
+def video_analysis_progress(analysis):
+    if not analysis or analysis.is_continuous:
+        return None, None
+    if analysis.status == VideoVisualizerStatus.COMPLETE:
+        return 100, 0
+    total = int(analysis.frame_count or 0)
+    if total <= 0:
+        return None, None
+    current = min(total, max(0, int(analysis.current_frame or 0)))
+    completed = int((current / total) * 100)
+    if analysis.status in {
+        VideoVisualizerStatus.QUEUED,
+        VideoVisualizerStatus.RETRYING,
+        VideoVisualizerStatus.RUNNING,
+    }:
+        completed = min(completed, 99)
+    return completed, 100 - completed
+
+
 def landing(request):
     return render(request, "console/landing.html")
 
@@ -2405,6 +2424,7 @@ def video_visualizer(request):
                     (selected_analysis.file_type or "").lower(),
                     "application/octet-stream",
                 )
+    progress_percent, remaining_percent = video_analysis_progress(selected_analysis)
     context = admin_context(request, "video_analyzer") | {
         "upload_form": upload_form,
         "analyses": analyses,
@@ -2426,6 +2446,8 @@ def video_visualizer(request):
         "video_source_type": video_source_type,
         "video_fallback_url": video_fallback_url,
         "video_fallback_type": video_fallback_type,
+        "progress_percent": progress_percent,
+        "remaining_percent": remaining_percent,
         "active_model": configuration.model_session,
         "analyzer_configuration": configuration,
         "detection_mask_refinement": settings.DETECTION_MASK_REFINEMENT,
@@ -2445,6 +2467,7 @@ def video_visualizer(request):
 def video_visualizer_status(request, analysis_id):
     analysis = get_object_or_404(VideoVisualizerAnalysis, pk=analysis_id)
     ensure_analysis_worker(analysis)
+    progress_percent, remaining_percent = video_analysis_progress(analysis)
     road_damage_count = analysis.tracks.filter(label__iexact="Road damage").exclude(
         review_status=VideoTrackReviewStatus.REJECTED
     ).count()
@@ -2473,6 +2496,8 @@ def video_visualizer_status(request, analysis_id):
             "source_processing_fps": float(analysis.source_processing_fps or 0),
             "realtime_factor": float(analysis.realtime_factor or 0),
             "duration_seconds": float(analysis.duration_seconds or 0),
+            "progress_percent": progress_percent,
+            "remaining_percent": remaining_percent,
             "live_preview_url": live_preview_url,
             "error_message": analysis.error_message,
         }

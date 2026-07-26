@@ -21,7 +21,12 @@ from console.models import (
     VideoVisualizerAnalysis,
     VideoVisualizerStatus,
 )
-from console.views import analysis_frame_detections, safe_media_url, save_visualizer_video
+from console.views import (
+    analysis_frame_detections,
+    safe_media_url,
+    save_visualizer_video,
+    video_analysis_progress,
+)
 
 
 class AnalyzerSettingsTests(TestCase):
@@ -97,6 +102,9 @@ class AnalyzerSettingsTests(TestCase):
         self.assertContains(analyzer, 'id="upload-analysis-modal"')
         self.assertContains(analyzer, 'id="visualizer-upload-form"')
         self.assertContains(analyzer, 'id="processing-modal"')
+        self.assertContains(analyzer, 'id="processing-percent-complete"')
+        self.assertContains(analyzer, 'id="processing-percent-remaining"')
+        self.assertContains(analyzer, 'role="progressbar"')
         self.assertContains(analyzer, 'id="analysis-ready-notification"')
         self.assertContains(analyzer, 'id="webcam-flip"')
         self.assertNotContains(analyzer, "Model and Analysis Settings")
@@ -105,6 +113,25 @@ class AnalyzerSettingsTests(TestCase):
         self.assertContains(settings_page, "Confidence threshold")
         self.assertContains(settings_page, "Default training architecture")
         self.assertContains(settings_page, "YOLO26s segmentation")
+
+    def test_recorded_analysis_reports_completed_and_remaining_percentages(self):
+        analysis = VideoVisualizerAnalysis.objects.create(
+            original_filename="progress.mp4",
+            file_hash="7" * 64,
+            file_type="mp4",
+            frame_count=400,
+            current_frame=100,
+            status=VideoVisualizerStatus.RUNNING,
+            model_session=self.model,
+            created_by=self.user,
+        )
+        self.assertEqual(video_analysis_progress(analysis), (25, 75))
+
+        response = self.client.get(f"/_authenticated/admin/video-analyzer/{analysis.pk}/status/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["progress_percent"], 25)
+        self.assertEqual(response.json()["remaining_percent"], 75)
 
     def test_new_analysis_copies_saved_configuration(self):
         form = VideoVisualizerUploadForm(

@@ -2507,6 +2507,24 @@ svg {
   border-radius: 999px;
 }
 
+.processing-percentage {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: #cbd5e1;
+}
+
+.processing-percentage strong {
+  color: #ffffff;
+  font-size: 1rem;
+}
+
+.processing-percentage span {
+  font-size: 0.85rem;
+}
+
 .processing-progress span {
   display: block;
   width: 32%;
@@ -2530,6 +2548,14 @@ svg {
   border-radius: 6px;
   font-weight: 800;
   cursor: pointer;
+}
+
+.analysis-progress-metric small {
+  display: block;
+  margin-top: 2px;
+  color: #94a3b8;
+  font-size: 0.7rem;
+  font-weight: 700;
 }
 
 .analysis-ready-notification {

@@ -95,7 +95,18 @@
         <dl class="analysis-compact-metrics">
           <div><dt>Total detections</dt><dd data-live-metric="detections">{{ analysis.total_detections|default:0 }}</dd></div>
           <div><dt>Average confidence</dt><dd data-live-metric="confidence">{% if analysis.average_confidence %}{{ analysis.average_confidence }}{% else %}--{% endif %}</dd></div>
-          <div><dt>Frames processed</dt><dd data-live-metric="frames">{{ analysis.frames_processed|default:0 }}</dd></div>
+          <div>
+            <dt>Analysis progress</dt>
+            <dd class="analysis-progress-metric">
+              {% if analysis.is_continuous %}
+                <span data-live-metric="progress">Live</span>
+                <small data-live-metric="remaining">Continuous</small>
+              {% else %}
+                <span data-live-metric="progress">{% if progress_percent is not None %}{{ progress_percent }}%{% else %}--{% endif %}</span>
+                <small data-live-metric="remaining">{% if remaining_percent is not None %}{{ remaining_percent }}% left{% else %}Calculating{% endif %}</small>
+              {% endif %}
+            </dd>
+          </div>
           <div><dt>Processing FPS</dt><dd data-live-metric="processing-fps">{{ analysis.average_processing_fps|default:0 }}</dd></div>
           <div><dt>Source FPS</dt><dd data-live-metric="source-fps">{{ analysis.source_processing_fps|default:0 }}</dd></div>
           <div><dt>Real-time factor</dt><dd><span data-live-metric="realtime-factor">{{ analysis.realtime_factor|default:0 }}</span>x</dd></div>
@@ -437,7 +448,19 @@
     <span class="analyzer-modal-kicker">Video Analyzer</span>
     <h2 id="processing-modal-title">Processing your video</h2>
     <p id="processing-modal-copy" aria-live="polite">Uploading the footage and preparing pothole detection…</p>
-    <div class="processing-progress" aria-hidden="true"><span></span></div>
+    <div class="processing-percentage" aria-live="polite">
+      <strong id="processing-percent-complete">0% complete</strong>
+      <span id="processing-percent-remaining">100% remaining</span>
+    </div>
+    <div
+      class="processing-progress"
+      id="processing-progress"
+      role="progressbar"
+      aria-label="Video analysis progress"
+      aria-valuemin="0"
+      aria-valuemax="100"
+      aria-valuenow="0"
+    ><span></span></div>
     <button type="button" class="processing-background-action" id="processing-modal-dismiss">Continue in background</button>
   </section>
 </div>

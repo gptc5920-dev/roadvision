@@ -1327,7 +1327,12 @@
     const processingDialog = processingModal?.querySelector(".processing-modal-dialog");
     const processingTitle = document.getElementById("processing-modal-title");
     const processingCopy = document.getElementById("processing-modal-copy");
-    const processingProgress = processingModal?.querySelector(".processing-progress span");
+    const processingProgressBar = document.getElementById("processing-progress");
+    const processingProgress = processingProgressBar?.querySelector("span");
+    const processingPercentComplete = document.getElementById("processing-percent-complete");
+    const processingPercentRemaining = document.getElementById("processing-percent-remaining");
+    const summaryProgress = document.querySelector('[data-live-metric="progress"]');
+    const summaryRemaining = document.querySelector('[data-live-metric="remaining"]');
     const dismissProcessing = document.getElementById("processing-modal-dismiss");
     const readyNotification = document.getElementById("analysis-ready-notification");
     const readyTitle = document.getElementById("analysis-ready-title");
@@ -1366,6 +1371,7 @@
       if (processingTitle) processingTitle.textContent = "Processing your video";
       if (processingCopy && message) processingCopy.textContent = message;
       if (processingProgress) processingProgress.style.removeProperty("width");
+      updateProcessingPercent(0, 100);
       if (dismissProcessing) dismissProcessing.hidden = false;
       syncModalOpenState();
       window.requestAnimationFrame(() => processingDialog?.focus());
@@ -1377,6 +1383,7 @@
     }
 
     function showReadyNotification(data) {
+      updateProcessingPercent(100, 0);
       hideProcessingModal();
       if (!readyNotification) return;
       const defectTotal = Number(data.total_unique_potholes || 0) + Number(data.road_damage_count || 0);
@@ -1402,18 +1409,56 @@
       readyNotification.hidden = false;
     }
 
+    function updateProcessingPercent(completed, remaining) {
+      const hasProgress = completed !== null
+        && completed !== undefined
+        && remaining !== null
+        && remaining !== undefined
+        && Number.isFinite(Number(completed))
+        && Number.isFinite(Number(remaining));
+      const completeValue = hasProgress ? Math.min(100, Math.max(0, Math.round(Number(completed)))) : null;
+      const remainingValue = hasProgress ? Math.min(100, Math.max(0, Math.round(Number(remaining)))) : null;
+
+      if (processingPercentComplete) {
+        processingPercentComplete.textContent = completeValue === null ? "Calculating progress" : `${completeValue}% complete`;
+      }
+      if (processingPercentRemaining) {
+        processingPercentRemaining.textContent = remainingValue === null ? "Checking video length" : `${remainingValue}% remaining`;
+      }
+      if (summaryProgress) summaryProgress.textContent = completeValue === null ? "--" : `${completeValue}%`;
+      if (summaryRemaining) summaryRemaining.textContent = remainingValue === null ? "Calculating" : `${remainingValue}% left`;
+      if (processingProgressBar) {
+        if (completeValue === null) {
+          processingProgressBar.removeAttribute("aria-valuenow");
+          processingProgressBar.setAttribute("aria-valuetext", "Progress is being calculated");
+        } else {
+          processingProgressBar.setAttribute("aria-valuenow", String(completeValue));
+          processingProgressBar.setAttribute(
+            "aria-valuetext",
+            `${completeValue}% complete, ${remainingValue}% remaining`
+          );
+        }
+      }
+      if (processingProgress) {
+        if (completeValue === null) {
+          processingProgress.style.removeProperty("width");
+        } else {
+          processingProgress.style.width = `${completeValue}%`;
+        }
+      }
+    }
+
     function updateProcessingState(data) {
       if (!processingCopy) return;
       const current = Number(data.current_frame || data.frames_processed || 0);
       const total = Number(data.frame_count || 0);
+      updateProcessingPercent(data.progress_percent, data.remaining_percent);
       if (data.status === "queued" || data.status === "retrying") {
         processingCopy.textContent = data.status === "retrying"
           ? "The analyzer is retrying this video. Processing will resume automatically."
           : "Your video is queued and will begin processing shortly.";
       } else if (total > 0) {
-        const percent = Math.min(100, Math.max(2, (current / total) * 100));
         processingCopy.textContent = `Detecting road defects — frame ${current.toLocaleString()} of ${total.toLocaleString()}.`;
-        if (processingProgress) processingProgress.style.width = `${percent}%`;
       } else {
         processingCopy.textContent = `Detecting and tracking road defects${current ? ` — ${current.toLocaleString()} frames processed` : ""}.`;
       }

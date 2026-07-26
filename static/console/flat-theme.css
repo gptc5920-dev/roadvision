@@ -1773,3 +1773,15 @@ tbody tr:hover td {
 .processing-progress span {
   background: linear-gradient(90deg, var(--flat-orange-dark), var(--flat-orange));
 }
+
+.processing-percentage {
+  color: var(--flat-muted);
+}
+
+.processing-percentage strong {
+  color: var(--flat-nav);
+}
+
+.analysis-progress-metric small {
+  color: var(--flat-muted);
+}
