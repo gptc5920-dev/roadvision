@@ -1343,6 +1343,10 @@
     const activeStatuses = ["queued", "retrying", "running"];
     let previousFocus = null;
     let statusPoll = 0;
+    let displayedProgress = 0;
+    let displayedRemaining = 100;
+    let progressAnimationFrame = 0;
+    const reduceProgressMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
 
     if (!uploadModal || !openUpload || !uploadForm || !processingModal) return;
 
@@ -1371,7 +1375,7 @@
       if (processingTitle) processingTitle.textContent = "Processing your video";
       if (processingCopy && message) processingCopy.textContent = message;
       if (processingProgress) processingProgress.style.removeProperty("width");
-      updateProcessingPercent(0, 100);
+      updateProcessingPercent(0, 100, true);
       if (dismissProcessing) dismissProcessing.hidden = false;
       syncModalOpenState();
       window.requestAnimationFrame(() => processingDialog?.focus());
@@ -1383,7 +1387,7 @@
     }
 
     function showReadyNotification(data) {
-      updateProcessingPercent(100, 0);
+      updateProcessingPercent(100, 0, true);
       hideProcessingModal();
       if (!readyNotification) return;
       const defectTotal = Number(data.total_unique_potholes || 0) + Number(data.road_damage_count || 0);
@@ -1409,7 +1413,18 @@
       readyNotification.hidden = false;
     }
 
-    function updateProcessingPercent(completed, remaining) {
+    function renderProcessingPercent(completed, remaining) {
+      if (processingPercentComplete) {
+        processingPercentComplete.textContent = `${completed}% complete`;
+      }
+      if (processingPercentRemaining) {
+        processingPercentRemaining.textContent = `${remaining}% remaining`;
+      }
+      if (summaryProgress) summaryProgress.textContent = `${completed}%`;
+      if (summaryRemaining) summaryRemaining.textContent = `${remaining}% left`;
+    }
+
+    function updateProcessingPercent(completed, remaining, immediate = false) {
       const hasProgress = completed !== null
         && completed !== undefined
         && remaining !== null
@@ -1419,33 +1434,54 @@
       const completeValue = hasProgress ? Math.min(100, Math.max(0, Math.round(Number(completed)))) : null;
       const remainingValue = hasProgress ? Math.min(100, Math.max(0, Math.round(Number(remaining)))) : null;
 
-      if (processingPercentComplete) {
-        processingPercentComplete.textContent = completeValue === null ? "Calculating progress" : `${completeValue}% complete`;
+      if (progressAnimationFrame) {
+        window.cancelAnimationFrame(progressAnimationFrame);
+        progressAnimationFrame = 0;
       }
-      if (processingPercentRemaining) {
-        processingPercentRemaining.textContent = remainingValue === null ? "Checking video length" : `${remainingValue}% remaining`;
+      if (completeValue === null) {
+        if (processingPercentComplete) processingPercentComplete.textContent = "Calculating progress";
+        if (processingPercentRemaining) processingPercentRemaining.textContent = "Checking video length";
+        if (summaryProgress) summaryProgress.textContent = "--";
+        if (summaryRemaining) summaryRemaining.textContent = "Calculating";
+        processingProgressBar?.classList.remove("is-determinate");
+        processingProgressBar?.removeAttribute("aria-valuenow");
+        processingProgressBar?.setAttribute("aria-valuetext", "Progress is being calculated");
+        processingProgress?.style.removeProperty("width");
+        return;
       }
-      if (summaryProgress) summaryProgress.textContent = completeValue === null ? "--" : `${completeValue}%`;
-      if (summaryRemaining) summaryRemaining.textContent = remainingValue === null ? "Calculating" : `${remainingValue}% left`;
-      if (processingProgressBar) {
-        if (completeValue === null) {
-          processingProgressBar.removeAttribute("aria-valuenow");
-          processingProgressBar.setAttribute("aria-valuetext", "Progress is being calculated");
+
+      processingProgressBar?.classList.add("is-determinate");
+      processingProgressBar?.setAttribute("aria-valuenow", String(completeValue));
+      processingProgressBar?.setAttribute(
+        "aria-valuetext",
+        `${completeValue}% complete, ${remainingValue}% remaining`
+      );
+      if (processingProgress) processingProgress.style.width = `${completeValue}%`;
+
+      if (immediate || reduceProgressMotion) {
+        displayedProgress = completeValue;
+        displayedRemaining = remainingValue;
+        renderProcessingPercent(displayedProgress, displayedRemaining);
+        return;
+      }
+
+      const startProgress = displayedProgress;
+      const startRemaining = displayedRemaining;
+      const startedAt = performance.now();
+      const duration = 1200;
+      const animateProgress = (now) => {
+        const elapsed = Math.min(1, (now - startedAt) / duration);
+        const eased = 1 - Math.pow(1 - elapsed, 3);
+        displayedProgress = Math.round(startProgress + (completeValue - startProgress) * eased);
+        displayedRemaining = Math.round(startRemaining + (remainingValue - startRemaining) * eased);
+        renderProcessingPercent(displayedProgress, displayedRemaining);
+        if (elapsed < 1) {
+          progressAnimationFrame = window.requestAnimationFrame(animateProgress);
         } else {
-          processingProgressBar.setAttribute("aria-valuenow", String(completeValue));
-          processingProgressBar.setAttribute(
-            "aria-valuetext",
-            `${completeValue}% complete, ${remainingValue}% remaining`
-          );
+          progressAnimationFrame = 0;
         }
-      }
-      if (processingProgress) {
-        if (completeValue === null) {
-          processingProgress.style.removeProperty("width");
-        } else {
-          processingProgress.style.width = `${completeValue}%`;
-        }
-      }
+      };
+      progressAnimationFrame = window.requestAnimationFrame(animateProgress);
     }
 
     function updateProcessingState(data) {
