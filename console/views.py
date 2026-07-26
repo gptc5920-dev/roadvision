@@ -2392,6 +2392,7 @@ def video_visualizer_status(request, analysis_id):
             "is_continuous": analysis.is_continuous,
             "stop_requested": analysis.stop_requested,
             "current_frame": analysis.current_frame,
+            "frame_count": analysis.frame_count,
             "frames_processed": analysis.frames_processed,
             "total_unique_potholes": analysis.total_unique_potholes,
             "road_damage_count": road_damage_count,

@@ -57,6 +57,11 @@ class AnalyzerSettingsTests(TestCase):
         analyzer = self.client.get("/_authenticated/admin/video-analyzer/")
         settings_page = self.client.get("/_authenticated/admin/settings/")
         self.assertContains(analyzer, "Upload and Analyze")
+        self.assertContains(analyzer, 'id="open-upload-modal"')
+        self.assertContains(analyzer, 'id="upload-analysis-modal"')
+        self.assertContains(analyzer, 'id="visualizer-upload-form"')
+        self.assertContains(analyzer, 'id="processing-modal"')
+        self.assertContains(analyzer, 'id="analysis-ready-notification"')
         self.assertNotContains(analyzer, "Model and Analysis Settings")
         self.assertNotContains(analyzer, "Confidence threshold")
         self.assertContains(settings_page, "Model and Analysis Settings")
@@ -289,6 +294,8 @@ class AnalyzerSettingsTests(TestCase):
             self.assertContains(response, 'id="visualizer-video"')
             self.assertContains(response, analysis.video.url)
             self.assertContains(response, "raw video preview is available")
+            self.assertContains(response, f'data-status-url="/_authenticated/admin/video-analyzer/{analysis.pk}/status/"')
+            self.assertContains(response, 'id="processing-modal"')
 
     @override_settings(AUTO_START_ANALYSIS_WORKER=True)
     def test_queued_analyzer_recovers_worker_when_opened(self):

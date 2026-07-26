@@ -1423,6 +1423,66 @@ input[type="radio"] {
   }
 }
 
+@media (max-width: 720px) {
+  .analyzer-modal {
+    align-items: end;
+    padding: 0;
+  }
+
+  .analyzer-modal-dialog {
+    width: 100%;
+    max-height: 92vh;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 14px 14px 0 0;
+  }
+
+  .analyzer-modal-head,
+  .visualizer-upload-form {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .analyzer-upload-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .analyzer-upload-grid .analyzer-upload-wide {
+    grid-column: auto;
+  }
+
+  .analyzer-modal-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .analyzer-modal-actions button {
+    width: 100%;
+  }
+
+  .processing-modal {
+    align-items: center;
+    padding: 18px;
+  }
+
+  .processing-modal-dialog {
+    border: 1px solid var(--flat-border);
+    border-radius: 12px;
+  }
+
+  .analysis-ready-notification {
+    right: 12px;
+    bottom: 12px;
+    width: calc(100vw - 24px);
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .analysis-ready-action {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

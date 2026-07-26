@@ -1169,6 +1169,180 @@
     });
   }
 
+  function initAnalyzerUploadWorkflow() {
+    const uploadModal = document.getElementById("upload-analysis-modal");
+    const uploadDialog = uploadModal?.querySelector(".analyzer-modal-dialog");
+    const openUpload = document.getElementById("open-upload-modal");
+    const closeUpload = document.getElementById("close-upload-modal");
+    const uploadForm = document.getElementById("visualizer-upload-form");
+    const uploadSubmit = document.getElementById("submit-video-analysis");
+    const processingModal = document.getElementById("processing-modal");
+    const processingDialog = processingModal?.querySelector(".processing-modal-dialog");
+    const processingTitle = document.getElementById("processing-modal-title");
+    const processingCopy = document.getElementById("processing-modal-copy");
+    const processingProgress = processingModal?.querySelector(".processing-progress span");
+    const dismissProcessing = document.getElementById("processing-modal-dismiss");
+    const readyNotification = document.getElementById("analysis-ready-notification");
+    const readyTitle = document.getElementById("analysis-ready-title");
+    const readyCopy = document.getElementById("analysis-ready-copy");
+    const viewResults = document.getElementById("view-analysis-results");
+    const closeNotification = document.getElementById("close-analysis-notification");
+    const stage = document.getElementById("visualizer-stage");
+    const activeStatuses = ["queued", "retrying", "running"];
+    let previousFocus = null;
+    let statusPoll = 0;
+
+    if (!uploadModal || !openUpload || !uploadForm || !processingModal) return;
+
+    function syncModalOpenState() {
+      const analyzerModalOpen = [uploadModal, processingModal].some((modal) => modal && !modal.hidden);
+      const imageModalOpen = imageViewer && !imageViewer.hidden;
+      document.body.classList.toggle("modal-open", Boolean(analyzerModalOpen || imageModalOpen));
+    }
+
+    function showUploadModal() {
+      previousFocus = document.activeElement;
+      uploadModal.hidden = false;
+      syncModalOpenState();
+      window.requestAnimationFrame(() => uploadDialog?.focus());
+    }
+
+    function hideUploadModal(restoreFocus = true) {
+      uploadModal.hidden = true;
+      syncModalOpenState();
+      if (restoreFocus) (previousFocus || openUpload)?.focus?.();
+    }
+
+    function showProcessingModal(message) {
+      uploadModal.hidden = true;
+      processingModal.hidden = false;
+      if (processingTitle) processingTitle.textContent = "Processing your video";
+      if (processingCopy && message) processingCopy.textContent = message;
+      if (processingProgress) processingProgress.style.removeProperty("width");
+      if (dismissProcessing) dismissProcessing.hidden = false;
+      syncModalOpenState();
+      window.requestAnimationFrame(() => processingDialog?.focus());
+    }
+
+    function hideProcessingModal() {
+      processingModal.hidden = true;
+      syncModalOpenState();
+    }
+
+    function showReadyNotification(data) {
+      hideProcessingModal();
+      if (!readyNotification) return;
+      const defectTotal = Number(data.total_unique_potholes || 0) + Number(data.road_damage_count || 0);
+      if (readyTitle) readyTitle.textContent = "Video analysis is ready";
+      if (readyCopy) {
+        readyCopy.textContent = defectTotal
+          ? `Processing is complete with ${defectTotal} tracked ${defectTotal === 1 ? "defect" : "defects"}.`
+          : "Processing is complete. Open the analysis to review the result.";
+      }
+      if (viewResults) viewResults.hidden = false;
+      readyNotification.classList.remove("is-error");
+      readyNotification.hidden = false;
+      readyNotification.focus?.();
+    }
+
+    function showProcessingFailure(data) {
+      hideProcessingModal();
+      if (!readyNotification) return;
+      if (readyTitle) readyTitle.textContent = data.status === "cancelled" ? "Video analysis was cancelled" : "Video analysis needs attention";
+      if (readyCopy) readyCopy.textContent = data.error_message || "The video could not be processed. Retry the analysis when ready.";
+      if (viewResults) viewResults.hidden = true;
+      readyNotification.classList.add("is-error");
+      readyNotification.hidden = false;
+    }
+
+    function updateProcessingState(data) {
+      if (!processingCopy) return;
+      const current = Number(data.current_frame || data.frames_processed || 0);
+      const total = Number(data.frame_count || 0);
+      if (data.status === "queued" || data.status === "retrying") {
+        processingCopy.textContent = data.status === "retrying"
+          ? "The analyzer is retrying this video. Processing will resume automatically."
+          : "Your video is queued and will begin processing shortly.";
+      } else if (total > 0) {
+        const percent = Math.min(100, Math.max(2, (current / total) * 100));
+        processingCopy.textContent = `Detecting road defects — frame ${current.toLocaleString()} of ${total.toLocaleString()}.`;
+        if (processingProgress) processingProgress.style.width = `${percent}%`;
+      } else {
+        processingCopy.textContent = `Detecting and tracking road defects${current ? ` — ${current.toLocaleString()} frames processed` : ""}.`;
+      }
+    }
+
+    async function pollAnalysisStatus() {
+      const statusUrl = stage?.dataset.statusUrl;
+      if (!statusUrl || !activeStatuses.includes(stage.dataset.analysisStatus || "")) return;
+      try {
+        const response = await fetch(statusUrl, {
+          headers: { "X-Requested-With": "XMLHttpRequest" },
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        stage.dataset.analysisStatus = data.status;
+        if (activeStatuses.includes(data.status)) {
+          updateProcessingState(data);
+          return;
+        }
+        window.clearInterval(statusPoll);
+        if (data.status === "complete") {
+          showReadyNotification(data);
+        } else {
+          showProcessingFailure(data);
+        }
+      } catch (error) {
+        if (processingCopy && !processingModal.hidden) {
+          processingCopy.textContent = "Processing continues in the background. Reconnecting to live status…";
+        }
+      }
+    }
+
+    openUpload.addEventListener("click", showUploadModal);
+    closeUpload?.addEventListener("click", () => hideUploadModal());
+    uploadModal.querySelectorAll("[data-close-upload-modal]").forEach((control) => {
+      control.addEventListener("click", () => hideUploadModal());
+    });
+    dismissProcessing?.addEventListener("click", hideProcessingModal);
+    closeNotification?.addEventListener("click", () => {
+      if (readyNotification) readyNotification.hidden = true;
+    });
+    uploadForm.addEventListener("submit", () => {
+      if (!uploadForm.checkValidity()) return;
+      if (uploadSubmit) {
+        uploadSubmit.disabled = true;
+        uploadSubmit.textContent = "Uploading…";
+      }
+      showProcessingModal("Uploading the footage and preparing pothole detection…");
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      if (!uploadModal.hidden) {
+        hideUploadModal();
+      } else if (!processingModal.hidden) {
+        hideProcessingModal();
+      }
+    });
+
+    if (
+      stage
+      && stage.dataset.continuous !== "true"
+      && activeStatuses.includes(stage.dataset.analysisStatus || "")
+    ) {
+      const initialStatus = stage.dataset.analysisStatus;
+      showProcessingModal(
+        initialStatus === "running"
+          ? "Detecting and tracking road defects…"
+          : "Your video is queued and will begin processing shortly."
+      );
+      pollAnalysisStatus();
+      statusPoll = window.setInterval(pollAnalysisStatus, 2000);
+      window.addEventListener("beforeunload", () => window.clearInterval(statusPoll), { once: true });
+    }
+  }
+
   function initContinuousVideoVisualizer(stage) {
     const statusUrl = stage.dataset.statusUrl;
     const preview = document.getElementById("continuous-live-preview");
@@ -1306,8 +1480,6 @@
     const nominalFps = Math.max(1, Number(document.querySelector("[data-video-fps]")?.dataset.videoFps || 30));
     const requestedStart = Number(new URLSearchParams(window.location.search).get("t") || 0);
     let overlayAnimationFrame = 0;
-    let statusPoll = 0;
-
     function visibleVideoRect() {
       const overlayRect = overlay.getBoundingClientRect();
       const elementRect = video.getBoundingClientRect();
@@ -1510,24 +1682,6 @@
       overlayAnimationFrame = 0;
     }
 
-    async function pollAnalysisCompletion() {
-      if (!["queued", "retrying", "running"].includes(stage.dataset.analysisStatus || "")) return;
-      try {
-        const response = await fetch(window.location.href, {
-          headers: { "X-Requested-With": "XMLHttpRequest" },
-          cache: "no-store",
-        });
-        if (!response.ok) return;
-        const html = await response.text();
-        const match = html.match(/data-analysis-status="([^"]+)"/);
-        if (match && !["queued", "retrying", "running"].includes(match[1])) {
-          window.location.reload();
-        }
-      } catch (error) {
-        // Keep the current raw preview and retry on the next interval.
-      }
-    }
-
     playButton?.addEventListener("click", () => {
       if (video.paused) {
         video.play();
@@ -1620,14 +1774,11 @@
     videoResizeObserver?.observe(stage);
     videoResizeObserver?.observe(video);
     window.addEventListener("beforeunload", () => videoResizeObserver?.disconnect(), { once: true });
-    if (["queued", "retrying", "running"].includes(stage.dataset.analysisStatus || "")) {
-      statusPoll = window.setInterval(pollAnalysisCompletion, 5000);
-      window.addEventListener("beforeunload", () => window.clearInterval(statusPoll), { once: true });
-    }
     arrangeTimelineMarkers();
     renderOverlay();
   }
 
+  initAnalyzerUploadWorkflow();
   initWebcamRecorder();
   initFleetCameraCapture();
   initVideoVisualizer();
