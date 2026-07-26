@@ -3,9 +3,12 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 from django.conf import settings
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from django.utils import timezone
 
 from .models import DetectionEvent, EngineeringPriority, EngineeringRecommendation, Severity, VideoAnalysis
+from .storage_paths import materialized_field_file
 
 
 MODEL_VERSION = "opencv-road-surface-detector-1.0"
@@ -89,14 +92,14 @@ def severity_from_detection(confidence, width_percent, height_percent):
 class OpenCVRoadSurfaceDetector:
     version = MODEL_VERSION
 
-    def predict(self, analysis: VideoAnalysis):
+    def predict(self, analysis: VideoAnalysis, video_path=None):
         try:
             import cv2
             import numpy as np
         except ImportError as exc:
             raise RuntimeError("Install opencv-python-headless and numpy to enable video analysis.") from exc
 
-        video_path = source_video_path(analysis)
+        video_path = video_path or source_video_path(analysis)
         if not video_path:
             raise RuntimeError("No local video file is available for analysis.")
 
@@ -392,14 +395,22 @@ def save_detection_snapshot(analysis, frame, x, y, w, h, contour, confidence, se
     cv2.putText(crop, label, (label_x + 5, label_y - 4), font, 0.58, white, 2, cv2.LINE_AA)
 
     relative_path = Path("detections") / f"analysis-{analysis.pk}-event-{sequence:03d}.jpg"
-    absolute_path = Path(settings.MEDIA_ROOT) / relative_path
-    absolute_path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(absolute_path), crop)
-    return str(relative_path).replace("\\", "/")
+    encoded, buffer = cv2.imencode(".jpg", crop)
+    if not encoded:
+        return ""
+    return default_storage.save(
+        str(relative_path).replace("\\", "/"),
+        ContentFile(buffer.tobytes()),
+    )
 
 
 def run_analysis(analysis: VideoAnalysis):
-    output = get_model().predict(analysis)
+    model = get_model()
+    if analysis.uploaded_video:
+        with materialized_field_file(analysis.uploaded_video) as video_path:
+            output = model.predict(analysis, video_path=video_path)
+    else:
+        output = model.predict(analysis)
     analysis.model_version = output.model_version
     analysis.frames_processed = output.frames_processed
     analysis.inference_fps = output.inference_fps

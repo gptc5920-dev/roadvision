@@ -19,6 +19,7 @@ from console.models import (
     VideoVisualizerStatus,
 )
 from console.readiness import dataset_readiness, model_artifact_matches, training_dataset_manifest
+from console.storage_paths import resolve_model_artifact
 
 
 def box_iou(left, right):
@@ -124,7 +125,7 @@ class Command(BaseCommand):
         readiness = dataset_readiness()
         if not readiness["ready"]:
             raise CommandError("Local evaluation dataset is not ready: " + "; ".join(readiness["errors"]))
-        model = YOLO(session.model_file)
+        model = YOLO(str(resolve_model_artifact(session.model_file)))
         if model.task != "segment":
             raise CommandError(f"Session {session.pk} is task {model.task!r}; local evaluation requires segmentation.")
 

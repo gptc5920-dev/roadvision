@@ -26,6 +26,7 @@ from console.models import (
 )
 from console.segmentation import draw_mask_overlay, estimate_detection_mask, normalized_polygon
 from console.readiness import model_readiness
+from console.storage_paths import resolve_model_artifact
 
 
 class AnalysisCancelled(CommandError):
@@ -358,11 +359,11 @@ class Command(BaseCommand):
         readiness = model_readiness(analysis.model_session)
         if not readiness["ready"]:
             raise CommandError("Model readiness gate failed: " + " ".join(readiness["errors"]))
-        model_path = analysis.model_session.model_file
-        if not os.path.exists(model_path):
+        model_path = resolve_model_artifact(analysis.model_session.model_file)
+        if not model_path.is_file():
             raise CommandError(f"Model file does not exist: {model_path}")
 
-        model = YOLO(model_path)
+        model = YOLO(str(model_path))
         detection_mode = model.task == "detect" and settings.ALLOW_DETECTION_MODE
         if model.task != "segment" and not detection_mode:
             raise CommandError("This model task is not enabled for video analysis.")

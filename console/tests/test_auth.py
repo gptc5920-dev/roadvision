@@ -50,6 +50,32 @@ class SignInTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
 
+    def test_liveness_endpoint_does_not_require_authentication(self):
+        response = self.client.get("/livez/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "alive"})
+
+    def test_local_media_requires_an_authenticated_staff_role(self):
+        denied = self.client.get(
+            "/internal/media-access/",
+            HTTP_X_ORIGINAL_URI="/media/video_visualizer/road.mp4",
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        self.user.console_role.role = "engineer"
+        self.user.console_role.save(update_fields=["role"])
+        self.client.force_login(self.user)
+        allowed = self.client.get(
+            "/internal/media-access/",
+            HTTP_X_ORIGINAL_URI="/media/video_visualizer/road.mp4",
+        )
+        traversal = self.client.get(
+            "/internal/media-access/",
+            HTTP_X_ORIGINAL_URI="/media/../secrets.env",
+        )
+        self.assertEqual(allowed.status_code, 204)
+        self.assertEqual(traversal.status_code, 403)
+
     def test_authenticated_console_includes_responsive_navigation_shell(self):
         self.user.console_role.role = "engineer"
         self.user.console_role.save(update_fields=["role"])

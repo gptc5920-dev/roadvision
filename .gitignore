@@ -1,7 +1,11 @@
 .env
+.env.production
+.env.*.local
 *.log
 __pycache__/
 *.py[cod]
 db.sqlite3
+*.sqlite3
 staticfiles/
 media/
+backups/

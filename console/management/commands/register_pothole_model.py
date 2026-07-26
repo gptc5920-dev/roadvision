@@ -7,6 +7,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from console.models import AnalyzerConfiguration, TrainingSession
+from console.storage_paths import portable_model_artifact_value
 
 
 class Command(BaseCommand):
@@ -68,7 +69,7 @@ class Command(BaseCommand):
             map50=options["map50"],
             map5095=options.get("map5095"),
             metrics={"source": "external", "validated_by": options["validated_by"], "class_names": class_names},
-            model_file=str(destination),
+            model_file=portable_model_artifact_value(destination),
             model_task=model.task,
             model_sha256=digest,
             is_validated=True,

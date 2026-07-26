@@ -12,16 +12,23 @@ def env_bool(name, default=False):
     return os.environ.get(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_list(name, default=""):
+    return [item.strip() for item in os.environ.get(name, default).split(",") if item.strip()]
+
+
 ENVIRONMENT = os.environ.get("ROADVISION_ENV", "development").lower()
 DEBUG = env_bool("DJANGO_DEBUG", ENVIRONMENT != "production")
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "django-insecure-roadvision-local-development")
-ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver").split(",")
-    if host.strip()
-]
-if ENVIRONMENT == "production" and SECRET_KEY.startswith("django-insecure-"):
-    raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set to a strong secret in production.")
+ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver")
+CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS")
+if ENVIRONMENT == "production" and (
+    SECRET_KEY.startswith("django-insecure-")
+    or "replace-with" in SECRET_KEY.lower()
+    or len(SECRET_KEY) < 50
+):
+    raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set to a strong, non-placeholder secret in production.")
+if ENVIRONMENT == "production" and (not ALLOWED_HOSTS or "*" in ALLOWED_HOSTS):
+    raise ImproperlyConfigured("DJANGO_ALLOWED_HOSTS must contain explicit production hostnames.")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -35,6 +42,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -45,18 +53,30 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = "config.urls"
 
+template_options = {
+    "context_processors": [
+        "django.template.context_processors.request",
+        "django.contrib.auth.context_processors.auth",
+        "django.contrib.messages.context_processors.messages",
+    ],
+}
+if ENVIRONMENT == "production":
+    template_options["loaders"] = [
+        (
+            "django.template.loaders.cached.Loader",
+            [
+                "django.template.loaders.filesystem.Loader",
+                "django.template.loaders.app_directories.Loader",
+            ],
+        )
+    ]
+
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
         "DIRS": [BASE_DIR / "templates"],
-        "APP_DIRS": True,
-        "OPTIONS": {
-            "context_processors": [
-                "django.template.context_processors.request",
-                "django.contrib.auth.context_processors.auth",
-                "django.contrib.messages.context_processors.messages",
-            ],
-        },
+        "APP_DIRS": ENVIRONMENT != "production",
+        "OPTIONS": template_options,
     },
 ]
 
@@ -79,6 +99,12 @@ DATABASES = {
         },
     }
 }
+if ENVIRONMENT == "production":
+    database_settings = DATABASES["default"]
+    if database_settings["USER"] == "root":
+        raise ImproperlyConfigured("Production must use a restricted database account, not root.")
+    if not database_settings["PASSWORD"] or "replace-with" in database_settings["PASSWORD"].lower():
+        raise ImproperlyConfigured("MYSQL_PASSWORD must be set to a non-placeholder production secret.")
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -94,9 +120,14 @@ USE_TZ = True
 
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
+STATIC_ROOT = Path(os.environ.get("STATIC_ROOT", BASE_DIR / "staticfiles"))
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", BASE_DIR / "media"))
 AWS_STORAGE_BUCKET_NAME = os.environ.get("AWS_STORAGE_BUCKET_NAME", "")
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
 if AWS_STORAGE_BUCKET_NAME:
     STORAGES = {
         "default": {
@@ -107,10 +138,13 @@ if AWS_STORAGE_BUCKET_NAME:
                 "endpoint_url": os.environ.get("AWS_S3_ENDPOINT_URL") or None,
                 "default_acl": None,
                 "querystring_auth": True,
+                "querystring_expire": int(os.environ.get("AWS_QUERYSTRING_EXPIRE", "900")),
+                "file_overwrite": False,
             },
         },
-        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+        "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
     }
+WHITENOISE_MAX_AGE = 31536000 if ENVIRONMENT == "production" else 0
 
 # Keep large uploads on disk instead of duplicating them in web-worker memory.
 FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get("FILE_UPLOAD_MAX_MEMORY_SIZE", str(2_621_440)))
@@ -144,15 +178,34 @@ AUTO_TRAIN_IMAGE_SIZE = int(os.environ.get("AUTO_TRAIN_IMAGE_SIZE", "512"))
 AUTO_TRAIN_DEVICE = os.environ.get("AUTO_TRAIN_DEVICE", "cpu")
 AUTO_START_ANALYSIS_WORKER = env_bool("AUTO_START_ANALYSIS_WORKER", ENVIRONMENT != "production")
 
+CACHE_TABLE = os.environ.get("DJANGO_CACHE_TABLE", "roadvision_cache")
+CACHES = {
+    "default": {
+        "BACKEND": (
+            "django.core.cache.backends.db.DatabaseCache"
+            if ENVIRONMENT == "production"
+            else "django.core.cache.backends.locmem.LocMemCache"
+        ),
+        "LOCATION": CACHE_TABLE if ENVIRONMENT == "production" else "roadvision-local",
+        "TIMEOUT": 300,
+        "OPTIONS": {"MAX_ENTRIES": 10000},
+    }
+}
+
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = env_bool("DJANGO_SECURE_COOKIES", ENVIRONMENT == "production")
 CSRF_COOKIE_SECURE = SESSION_COOKIE_SECURE
 SECURE_SSL_REDIRECT = env_bool("DJANGO_SECURE_SSL_REDIRECT", ENVIRONMENT == "production")
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_HSTS_SECONDS = int(os.environ.get("DJANGO_HSTS_SECONDS", "31536000" if ENVIRONMENT == "production" else "0"))
-SECURE_HSTS_INCLUDE_SUBDOMAINS = ENVIRONMENT == "production"
-SECURE_HSTS_PRELOAD = ENVIRONMENT == "production"
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("DJANGO_HSTS_INCLUDE_SUBDOMAINS", ENVIRONMENT == "production")
+SECURE_HSTS_PRELOAD = env_bool("DJANGO_HSTS_PRELOAD", False)
 SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
 X_FRAME_OPTIONS = "DENY"
 
 LOGGING = {
@@ -165,8 +218,22 @@ LOGGING = {
         }
     },
     "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "roadvision"}},
+    "root": {
+        "handlers": ["console"],
+        "level": os.environ.get("ROOT_LOG_LEVEL", "WARNING"),
+    },
     "loggers": {
         "console": {"handlers": ["console"], "level": os.environ.get("LOG_LEVEL", "INFO"), "propagate": False},
+        "django.request": {
+            "handlers": ["console"],
+            "level": os.environ.get("DJANGO_REQUEST_LOG_LEVEL", "WARNING"),
+            "propagate": False,
+        },
+        "django.security": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
     },
 }
 

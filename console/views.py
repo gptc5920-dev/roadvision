@@ -47,6 +47,7 @@ from .forms import (
 from .ml import run_analysis
 from .readiness import dataset_readiness, model_readiness, training_dataset_manifest
 from .segmentation import draw_mask_overlay, estimate_detection_mask, pixel_polygon
+from .storage_paths import materialized_field_file, resolve_model_artifact
 from .models import (
     AppRole,
     AnalyzerConfiguration,
@@ -101,6 +102,20 @@ def health(request):
     except Exception:
         return JsonResponse({"status": "unavailable"}, status=503)
     return JsonResponse({"status": "ok"})
+
+
+def liveness(request):
+    return JsonResponse({"status": "alive"})
+
+
+def media_access(request):
+    """Authorize Nginx internal subrequests before serving local media files."""
+    original_uri = request.headers.get("X-Original-URI", "")
+    original_path = urlparse(original_uri).path
+    safe_path = original_path.startswith(settings.MEDIA_URL) and ".." not in original_path.split("/")
+    if request.user.is_authenticated and is_staff_role(request.user) and safe_path:
+        return HttpResponse(status=204)
+    return HttpResponse(status=403)
 
 
 def auth_page(request):
@@ -811,7 +826,7 @@ def auto_label_dataset_images(images, user):
     except Exception as exc:
         raise ValueError("Ultralytics is required for automatic image labeling.") from exc
 
-    model = YOLO(session.model_file)
+    model = YOLO(str(resolve_model_artifact(session.model_file)))
     total_annotations = 0
     for record in images:
         record.image.open("rb")
@@ -1031,8 +1046,9 @@ def annotation_quality_flags(image):
             flags.append("missing mask")
             break
     try:
-        with Image.open(image.image.path) as opened:
-            opened.verify()
+        with materialized_field_file(image.image) as image_path:
+            with Image.open(image_path) as opened:
+                opened.verify()
     except Exception:
         flags.append("corrupted image")
     return flags
@@ -1174,58 +1190,59 @@ def run_augmentation_job(user, selected_options):
         ]
         if not annotations:
             continue
-        with Image.open(source_image.image.path) as opened:
-            for option in selected_options:
-                augmented = apply_augmentation_image(opened, option)
-                next_boxes = []
-                for box in annotations:
-                    points = transform_segmentation_points(option, box["segmentation_points"])
-                    if len(points) < 3:
+        with materialized_field_file(source_image.image) as source_path:
+            with Image.open(source_path) as opened:
+                for option in selected_options:
+                    augmented = apply_augmentation_image(opened, option)
+                    next_boxes = []
+                    for box in annotations:
+                        points = transform_segmentation_points(option, box["segmentation_points"])
+                        if len(points) < 3:
+                            continue
+                        transformed = transform_annotation_box(option, box)
+                        if transformed:
+                            transformed["segmentation_points"] = points
+                            next_boxes.append(transformed)
+                    if not next_boxes:
                         continue
-                    transformed = transform_annotation_box(option, box)
-                    if transformed:
-                        transformed["segmentation_points"] = points
-                        next_boxes.append(transformed)
-                if not next_boxes:
-                    continue
-                buffer = io.BytesIO()
-                augmented.save(buffer, format="JPEG", quality=92)
-                data = buffer.getvalue()
-                metadata = {
-                    "file_hash": hashlib.sha256(data).hexdigest(),
-                    "file_size": len(data),
-                    "file_type": "jpeg",
-                    "width": augmented.width,
-                    "height": augmented.height,
-                    "extension": ".jpg",
-                }
-                if DatasetImage.objects.filter(file_hash=metadata["file_hash"]).exists():
-                    continue
-                record = save_dataset_image_from_bytes(
-                    data,
-                    f"{source_image.dataset_id}-{option}.jpg",
-                    metadata,
-                    source_image.split,
-                    user,
-                    source=DatasetImageSource.AUGMENTED,
-                    parent=source_image,
-                    source_group=source_image.source_group or f"image-{source_image.pk}",
-                )
-                record.status = DatasetImageStatus.FULL
-                record.save(update_fields=["status"])
-                PotholeAnnotation.objects.bulk_create(
-                    [
-                        PotholeAnnotation(
-                            image=record,
-                            source=PotholeAnnotation.Source.AUGMENTED,
-                            created_by=user,
-                            **box,
-                        )
-                        for box in next_boxes
-                    ]
-                )
-                generated += 1
-                audit_dataset(user, "augment", f"Generated augmented image {record.dataset_id}.", dataset_image=record)
+                    buffer = io.BytesIO()
+                    augmented.save(buffer, format="JPEG", quality=92)
+                    data = buffer.getvalue()
+                    metadata = {
+                        "file_hash": hashlib.sha256(data).hexdigest(),
+                        "file_size": len(data),
+                        "file_type": "jpeg",
+                        "width": augmented.width,
+                        "height": augmented.height,
+                        "extension": ".jpg",
+                    }
+                    if DatasetImage.objects.filter(file_hash=metadata["file_hash"]).exists():
+                        continue
+                    record = save_dataset_image_from_bytes(
+                        data,
+                        f"{source_image.dataset_id}-{option}.jpg",
+                        metadata,
+                        source_image.split,
+                        user,
+                        source=DatasetImageSource.AUGMENTED,
+                        parent=source_image,
+                        source_group=source_image.source_group or f"image-{source_image.pk}",
+                    )
+                    record.status = DatasetImageStatus.FULL
+                    record.save(update_fields=["status"])
+                    PotholeAnnotation.objects.bulk_create(
+                        [
+                            PotholeAnnotation(
+                                image=record,
+                                source=PotholeAnnotation.Source.AUGMENTED,
+                                created_by=user,
+                                **box,
+                            )
+                            for box in next_boxes
+                        ]
+                    )
+                    generated += 1
+                    audit_dataset(user, "augment", f"Generated augmented image {record.dataset_id}.", dataset_image=record)
     version = create_dataset_version(user, notes=f"Augmentation job {job.pk}")
     DatasetImage.objects.filter(dataset_version__isnull=True).update(dataset_version=version)
     job.generated_count = generated
@@ -1236,7 +1253,8 @@ def run_augmentation_job(user, selected_options):
 
 def run_optional_detection(test):
     session = test.model_session
-    if not session or not session.model_file or not os.path.exists(session.model_file):
+    model_path = resolve_model_artifact(session.model_file) if session and session.model_file else None
+    if not model_path or not model_path.is_file():
         test.status = "pending"
         test.save(update_fields=["status"])
         return "No trained model file is available yet. Test image was saved for later inference."
@@ -1248,20 +1266,21 @@ def run_optional_detection(test):
         test.save(update_fields=["status"])
         return "Ultralytics is not installed. Test image was saved for later inference."
     started = time.perf_counter()
-    model = YOLO(session.model_file)
+    model = YOLO(str(model_path))
     if model.task not in {"segment", "detect"} or (model.task == "detect" and not settings.ALLOW_DETECTION_MODE):
         test.status = "failed"
         test.save(update_fields=["status"])
         return "Detection blocked: this model task is not enabled."
     is_segmentation = model.task == "segment"
-    result = model.predict(
-        source=test.image.path,
-        conf=test.confidence_threshold / 100,
-        iou=test.iou_threshold / 100,
-        verbose=False,
-    )[0]
     detections = []
-    frame = cv2.imread(test.image.path)
+    with materialized_field_file(test.image) as test_image_path:
+        result = model.predict(
+            source=str(test_image_path),
+            conf=test.confidence_threshold / 100,
+            iou=test.iou_threshold / 100,
+            verbose=False,
+        )[0]
+        frame = cv2.imread(str(test_image_path))
     if frame is None:
         test.status = "failed"
         test.save(update_fields=["status"])

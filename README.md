@@ -1,10 +1,10 @@
 # RoadVision / RoadSense
 
-RoadVision is a Django application for authenticated pothole-video analysis, engineering review, model training, and dataset feedback. It uses the XAMPP MariaDB database `roadsense` by default.
+RoadVision is a Django application for authenticated pothole-video analysis, engineering review, model training, and dataset feedback. Production targets Django 5.2 LTS and MariaDB 10.11 or another currently supported database.
 
 ## Local setup
 
-1. Start MySQL in XAMPP.
+1. Start MariaDB 10.5 or newer. The old XAMPP MariaDB 10.4 line is development-only legacy data and is not supported by Django 5.2.
 2. Install dependencies: `python -m pip install -r requirements.txt`
 3. Apply schema changes: `python manage.py migrate`
 4. Start the site: `python manage.py runserver`
@@ -114,8 +114,11 @@ The migration `0015_unify_legacy_analyses` exposes old `VideoAnalysis`/`Detectio
 
 ## Operations
 
-- Health check: `GET /healthz/`
+- Liveness check: `GET /livez/`
+- Database readiness check: `GET /healthz/`
 - Readiness: `python manage.py roadvision_readiness`
+- Inference deployment readiness: `python manage.py roadvision_readiness --scope analysis --strict`
+- Training readiness: `python manage.py roadvision_readiness --scope training --strict`
 - Worker: `python manage.py run_video_visualizer_analysis --watch`
 - One job: `python manage.py run_video_visualizer_analysis --analysis-id ID`
 - Local model evaluation: `python manage.py evaluate_pothole_model --session-id ID`
@@ -124,3 +127,8 @@ The migration `0015_unify_legacy_analyses` exposes old `VideoAnalysis`/`Detectio
 - Read-only concurrency smoke check: `python manage.py roadvision_load_check --requests 50 --concurrency 5`
 
 For production, run the web and worker processes separately, enable HTTPS, configure a strong `DJANGO_SECRET_KEY`, use restricted MySQL credentials, rotate the default account, configure centralized logs, and use durable object storage with retention policies.
+
+For Coolify, use [COOLIFY.md](COOLIFY.md) and
+`docker-compose.coolify.yml`. The standalone container deployment, backup, TLS,
+worker, model-registration, and rollback procedure is in
+[DEPLOYMENT.md](DEPLOYMENT.md).

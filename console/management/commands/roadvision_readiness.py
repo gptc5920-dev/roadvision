@@ -15,30 +15,46 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--strict", action="store_true", help="Return a failing exit code when blocked.")
+        parser.add_argument(
+            "--scope",
+            choices=["all", "analysis", "training"],
+            default="all",
+            help="Check all gates, inference deployment only, or training readiness only.",
+        )
 
     def handle(self, *args, **options):
         failures = []
         warnings = []
+        scope = options["scope"]
         with connection.cursor() as cursor:
             cursor.execute("SELECT DATABASE(), VERSION()")
             database_name, database_version = cursor.fetchone()
         self.stdout.write(f"Database: {database_name} ({database_version})")
 
-        media_root = Path(settings.MEDIA_ROOT)
-        media_root.mkdir(parents=True, exist_ok=True)
-        free_gb = shutil.disk_usage(media_root).free / (1024 ** 3)
-        self.stdout.write(f"Media storage free: {free_gb:.2f} GB")
-        if free_gb < 5:
-            warnings.append("Media storage has less than 5 GB free.")
+        if settings.AWS_STORAGE_BUCKET_NAME:
+            self.stdout.write(f"Media storage: S3 bucket {settings.AWS_STORAGE_BUCKET_NAME}")
+        else:
+            media_root = Path(settings.MEDIA_ROOT)
+            media_root.mkdir(parents=True, exist_ok=True)
+            free_gb = shutil.disk_usage(media_root).free / (1024 ** 3)
+            self.stdout.write(f"Media storage free: {free_gb:.2f} GB")
+            if free_gb < 5:
+                warnings.append("Media storage has less than 5 GB free.")
 
-        dataset = dataset_readiness()
-        self.stdout.write(f"Dataset: {dataset['counts']}")
-        failures.extend(dataset["errors"])
+        if scope in {"all", "training"}:
+            dataset = dataset_readiness()
+            self.stdout.write(f"Dataset: {dataset['counts']}")
+            failures.extend(dataset["errors"])
+        else:
+            self.stdout.write("Dataset: skipped for analysis-only readiness")
 
-        model = model_readiness()
-        self.stdout.write(f"Active validated model: {model['session'] or 'none'}")
-        failures.extend(model["errors"])
-        warnings.extend(model.get("warnings", []))
+        if scope in {"all", "analysis"}:
+            model = model_readiness()
+            self.stdout.write(f"Active validated model: {model['session'] or 'none'}")
+            failures.extend(model["errors"])
+            warnings.extend(model.get("warnings", []))
+        else:
+            self.stdout.write("Active model: skipped for training-only readiness")
 
         stale = VideoVisualizerAnalysis.objects.filter(
             status=VideoVisualizerStatus.RUNNING,
@@ -56,6 +72,8 @@ class Command(BaseCommand):
         db = settings.DATABASES["default"]
         if db["USER"] == "root" or not db["PASSWORD"]:
             warnings.append("MySQL is using root or an empty password; create a restricted application user.")
+        if settings.ENVIRONMENT == "production" and settings.AUTO_START_ANALYSIS_WORKER:
+            warnings.append("AUTO_START_ANALYSIS_WORKER should be false when a durable worker service is deployed.")
 
         for warning in warnings:
             self.stdout.write(self.style.WARNING("WARN: " + warning))

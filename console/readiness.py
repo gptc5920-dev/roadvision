@@ -7,6 +7,7 @@ from django.conf import settings
 from django.db.models import Count
 
 from .models import DatasetImage, DatasetImageStatus, DatasetSplit, TrainingSession
+from .storage_paths import resolve_model_artifact
 
 
 @lru_cache(maxsize=32)
@@ -19,7 +20,7 @@ def _artifact_sha256(path, modified_ns, size):
 
 
 def model_artifact_matches(session):
-    model_path = Path(session.model_file)
+    model_path = resolve_model_artifact(session.model_file)
     if not model_path.is_file() or not session.model_sha256:
         return False
     stat = model_path.stat()
@@ -122,7 +123,7 @@ def model_readiness(session=None):
     if session is None:
         errors.append("No active validated model is registered.")
     else:
-        model_path = Path(session.model_file)
+        model_path = resolve_model_artifact(session.model_file)
         if not model_path.is_file():
             errors.append(f"Model artifact is missing: {model_path}")
         if not session.model_sha256:

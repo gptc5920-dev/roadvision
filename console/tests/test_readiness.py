@@ -12,10 +12,24 @@ from console.models import (
     TrainingSession,
 )
 from console.readiness import dataset_readiness, model_readiness
+from console.storage_paths import resolve_model_artifact
 
 
 @override_settings(DATASET_MIN_TRAIN_IMAGES=1, DATASET_MIN_VAL_IMAGES=1, DATASET_MIN_TEST_IMAGES=1)
 class ReadinessTests(TestCase):
+    def test_windows_model_record_resolves_to_deployment_model_volume(self):
+        with tempfile.TemporaryDirectory() as temp_directory:
+            base_dir = Path(temp_directory)
+            registered = base_dir / "models" / "registered"
+            registered.mkdir(parents=True)
+            artifact = registered / "portable-model.pt"
+            artifact.write_bytes(b"model")
+            with override_settings(BASE_DIR=base_dir, MEDIA_ROOT=base_dir / "media"):
+                resolved = resolve_model_artifact(
+                    r"C:\Users\operator\roadvision\models\registered\portable-model.pt"
+                )
+            self.assertEqual(resolved, artifact)
+
     def test_dataset_requires_approved_annotations_in_every_split(self):
         self.assertFalse(dataset_readiness()["ready"])
         for index, split in enumerate(DatasetSplit.values):

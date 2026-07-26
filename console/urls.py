@@ -7,6 +7,8 @@ from . import views
 urlpatterns = [
     path("", views.landing, name="home"),
     path("healthz/", views.health, name="health"),
+    path("livez/", views.liveness, name="liveness"),
+    path("internal/media-access/", views.media_access, name="media_access"),
     path("auth/", views.auth_page, name="auth"),
     path("logout/", views.sign_out, name="logout"),
     path("_authenticated/", views.authenticated_index, name="authenticated_index"),

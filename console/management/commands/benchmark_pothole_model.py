@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from console.models import TrainingSession
 from console.readiness import model_artifact_matches
+from console.storage_paths import resolve_model_artifact
 
 
 class Command(BaseCommand):
@@ -48,7 +49,7 @@ class Command(BaseCommand):
         device = options["device"]
         if device == "auto":
             device = "0" if torch.cuda.is_available() else "cpu"
-        model = YOLO(session.model_file)
+        model = YOLO(str(resolve_model_artifact(session.model_file)))
         self.stdout.write(f"session={session.pk} task={model.task} device={device} frames={len(frames)}")
         for size in [int(value.strip()) for value in options["sizes"].split(",") if value.strip()]:
             model.predict(source=frames[0], imgsz=size, conf=0.25, device=device, verbose=False, save=False)
