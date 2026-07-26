@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import ipaddress
+import logging
 import os
 import random
 import socket
@@ -93,6 +94,17 @@ VIDEO_MIME_TYPES = {
     "mp4": "video/mp4",
     "webm": "video/webm",
 }
+logger = logging.getLogger(__name__)
+
+
+def safe_media_url(field_file):
+    if not field_file:
+        return ""
+    try:
+        return field_file.url
+    except Exception:
+        logger.exception("Could not resolve media URL for %s.", getattr(field_file, "name", "unknown media"))
+        return ""
 
 
 def landing(request):
@@ -2362,20 +2374,28 @@ def video_visualizer(request):
     video_fallback_type = ""
     if selected_analysis:
         if selected_analysis.processed_video:
-            video_source_url = selected_analysis.processed_video.url
-            video_source_type = "video/mp4"
+            video_source_url = safe_media_url(selected_analysis.processed_video)
+            if video_source_url:
+                video_source_type = "video/mp4"
             if selected_analysis.video:
-                video_fallback_url = selected_analysis.video.url
-                video_fallback_type = VIDEO_MIME_TYPES.get(
-                    selected_analysis.file_type.lower(),
+                original_url = safe_media_url(selected_analysis.video)
+                original_type = VIDEO_MIME_TYPES.get(
+                    (selected_analysis.file_type or "").lower(),
                     "application/octet-stream",
                 )
+                if video_source_url:
+                    video_fallback_url = original_url
+                    video_fallback_type = original_type
+                else:
+                    video_source_url = original_url
+                    video_source_type = original_type
         elif selected_analysis.video:
-            video_source_url = selected_analysis.video.url
-            video_source_type = VIDEO_MIME_TYPES.get(
-                selected_analysis.file_type.lower(),
-                "application/octet-stream",
-            )
+            video_source_url = safe_media_url(selected_analysis.video)
+            if video_source_url:
+                video_source_type = VIDEO_MIME_TYPES.get(
+                    (selected_analysis.file_type or "").lower(),
+                    "application/octet-stream",
+                )
     context = admin_context(request, "video_analyzer") | {
         "upload_form": upload_form,
         "analyses": analyses,

@@ -20,10 +20,24 @@ from console.models import (
     VideoVisualizerAnalysis,
     VideoVisualizerStatus,
 )
-from console.views import save_visualizer_video
+from console.views import safe_media_url, save_visualizer_video
 
 
 class AnalyzerSettingsTests(TestCase):
+    def test_unavailable_media_url_does_not_crash_the_analyzer(self):
+        class BrokenMedia:
+            name = "missing/processed.mp4"
+
+            def __bool__(self):
+                return True
+
+            @property
+            def url(self):
+                raise OSError("storage unavailable")
+
+        with self.assertLogs("console.views", level="ERROR"):
+            self.assertEqual(safe_media_url(BrokenMedia()), "")
+
     def setUp(self):
         self.user = get_user_model().objects.create_user(
             username="admin@example.com", email="admin@example.com", password="password"
