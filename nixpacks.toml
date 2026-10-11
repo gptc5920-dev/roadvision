@@ -1,8 +1,8 @@
-providers = ["python", "node"]
+providers = ["python"]
 
 [variables]
+PORT = "8000"
 NIXPACKS_PYTHON_VERSION = "3.12"
-NIXPACKS_NODE_VERSION = "22"
 PYTHONDONTWRITEBYTECODE = "1"
 PYTHONUNBUFFERED = "1"
 ALLOW_DETECTION_MODE = "true"
@@ -10,28 +10,11 @@ DETECTION_MASK_REFINEMENT = "true"
 AUTO_REGISTER_BUNDLED_MODEL = "true"
 
 [phases.setup]
-# Match Node's package set so Python's LD_LIBRARY_PATH cannot load an older
-# libstdc++ than Node/ICU requires (CXXABI_1.3.15).
+# Keep the Python runtime package set pinned for reproducible builds.
 nixpkgsArchive = "e6f23dc08d3624daab7094b701aa3954923c6bbb"
 # PyMySQL does not need the provider's auto-detected native MySQL headers.
-nixPkgs = ["python312", "gcc", "caddy"]
+nixPkgs = ["python312", "gcc"]
 aptPkgs = ["...", "curl", "wget", "ffmpeg", "libglib2.0-0"]
-
-[phases."node:setup"]
-nixpkgsArchive = "e6f23dc08d3624daab7094b701aa3954923c6bbb"
-
-# Use the repository Caddyfile rather than the Node provider's static-site plan.
-[phases."node:caddy"]
-nixPkgs = []
-cmds = []
-
-# The shared build phase builds React once after both dependency installations.
-[phases."node:build"]
-cmds = []
-
-[phases.build]
-dependsOn = ["install", "node:install"]
-cmds = ["npm run build"]
 
 [start]
 cmd = "bash deploy/start-nixpacks.sh"

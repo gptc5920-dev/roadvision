@@ -26,17 +26,19 @@ analysis jobs, and training jobs.
 The `frontend/` source is a Git submodule. Initialize it after cloning with
 `git submodule update --init --recursive` (or clone with `--recurse-submodules`).
 
-- Install frontend dependencies: `npm install`
-- Build the React frontend: `npm run build`
+- Install frontend dependencies: `npm --prefix frontend ci`
+- Build the React frontend: `npm --prefix frontend run build`
 - The production bundle and HTML shell are written to `frontend/dist/`.
   A separate Caddy process serves those files and all React routes. Django
   serves the API and protected downloads; it does not render the frontend.
 
-Run `npm run build` after changing anything in `frontend/src/`. Coolify installs
-from `package-lock.json` and builds the bundle. One Coolify application runs
-Caddy on the public port (`PORT=8000`), Django on `127.0.0.1:8001`, and the
-analysis worker. Caddy proxies backend routes to Django, so React's existing
-relative API URLs and session/CSRF cookies continue to work on one origin.
+The `frontend/` repository contains its own package manifest, lockfile, Vite
+config, and Nixpacks deployment config. Deploy it at `https://roadsense.site`;
+deploy the Django repository separately at `https://api.roadsense.site`.
+The frontend Caddy server forwards API and protected media requests to
+`API_UPSTREAM=https://api.roadsense.site`, so React's relative API URLs and
+session/CSRF cookies work through the frontend origin. The backend deployment
+does not install Node, build React, or serve application pages.
 
 For local full-stack development without MariaDB, use the isolated SQLite
 profile in two terminals:

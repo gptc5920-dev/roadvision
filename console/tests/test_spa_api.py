@@ -1,6 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.db import connection
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from unittest.mock import patch
@@ -112,6 +112,39 @@ class ReactSpaApiTests(TestCase):
         response = self.client.get("/api/overview/")
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"], "Authentication required.")
+
+    @override_settings(
+        ALLOWED_HOSTS=["api.roadsense.site"],
+        CSRF_TRUSTED_ORIGINS=["https://roadsense.site"],
+    )
+    def test_frontend_proxy_login_preserves_csrf_and_session_cookies(self):
+        browser = Client(enforce_csrf_checks=True)
+        headers = {
+            "HTTP_HOST": "api.roadsense.site",
+            "HTTP_X_FORWARDED_HOST": "api.roadsense.site",
+            "HTTP_X_FORWARDED_PROTO": "https",
+        }
+        token = browser.get("/api/session/", **headers).json()["csrfToken"]
+        response = browser.post(
+            "/api/auth/login/",
+            data='{"email":"spa-admin@example.com","password":"RoadVision-SPA-2026!"}',
+            content_type="application/json",
+            HTTP_ORIGIN="https://roadsense.site",
+            HTTP_X_CSRFTOKEN=token,
+            **headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.cookies["sessionid"]["domain"], "")
+        self.assertEqual(response.cookies["csrftoken"]["domain"], "")
+        session = browser.get("/api/session/", **headers).json()
+        self.assertTrue(session["authenticated"])
+        rejected = browser.post(
+            "/api/auth/logout/",
+            HTTP_ORIGIN="https://untrusted.example",
+            HTTP_X_CSRFTOKEN=session["csrfToken"],
+            **headers,
+        )
+        self.assertEqual(rejected.status_code, 403)
 
     def test_overview_and_report_action_use_json_contract(self):
         self.client.force_login(self.user)
