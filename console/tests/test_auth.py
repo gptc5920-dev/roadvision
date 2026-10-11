@@ -15,35 +15,36 @@ class SignInTests(TestCase):
     def test_signup_mode_cannot_create_an_account(self):
         before = get_user_model().objects.count()
         response = self.client.post(
-            "/auth/",
+            "/api/auth/login/",
             {"mode": "signup", "full_name": "Blocked", "email": "new@example.com", "password": "password"},
         )
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("error", response.json())
         self.assertEqual(get_user_model().objects.count(), before)
 
     @override_settings(LOGIN_MAX_ATTEMPTS=2, LOGIN_LOCKOUT_SECONDS=60)
     def test_repeated_bad_passwords_are_throttled(self):
         payload = {"email": self.user.email, "password": "wrong"}
-        self.client.post("/auth/", payload, REMOTE_ADDR="192.0.2.1")
-        self.client.post("/auth/", payload, REMOTE_ADDR="192.0.2.1")
-        response = self.client.post("/auth/", payload, REMOTE_ADDR="192.0.2.1")
-        self.assertContains(response, "Too many sign-in attempts")
+        self.client.post("/api/auth/login/", payload, REMOTE_ADDR="192.0.2.1")
+        self.client.post("/api/auth/login/", payload, REMOTE_ADDR="192.0.2.1")
+        response = self.client.post("/api/auth/login/", payload, REMOTE_ADDR="192.0.2.1")
+        self.assertEqual(response.status_code, 429)
+        self.assertIn("Too many sign-in attempts", response.json()["error"])
 
     def test_valid_sign_in_redirects_to_analyzer(self):
         response = self.client.post(
-            "/auth/",
+            "/api/auth/login/",
             {"email": self.user.email, "password": "correct-password"},
         )
-        self.assertRedirects(response, "/_authenticated/admin/", fetch_redirect_response=False)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["redirect"], "/app/analyzer")
+        self.assertEqual(int(self.client.session["_auth_user_id"]), self.user.pk)
 
     def test_sign_in_page_offers_password_visibility_toggle(self):
-        response = self.client.get("/auth/")
+        response = self.client.get("/login")
 
-        self.assertContains(response, 'id="sign-in-password"')
-        self.assertContains(response, 'aria-controls="sign-in-password"')
-        self.assertContains(response, 'aria-label="Show password"')
-        self.assertContains(response, 'class="password-toggle-icon"')
-        self.assertContains(response, "console/auth.js")
+        self.assertContains(response, 'id="root"')
+        self.assertRegex(response.content.decode(), r'/static/console/react/assets/index-[^" ]+\.js')
 
     def test_health_endpoint(self):
         response = self.client.get("/healthz/")
@@ -71,11 +72,9 @@ class SignInTests(TestCase):
         self.user.console_role.save(update_fields=["role"])
         self.client.force_login(self.user)
 
-        response = self.client.get("/_authenticated/admin/")
+        response = self.client.get("/app/analyzer")
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "console/responsive.css")
-        self.assertContains(response, 'id="app-sidebar"')
-        self.assertContains(response, 'id="sidebar-backdrop"')
-        self.assertContains(response, 'aria-controls="app-sidebar"')
-        self.assertContains(response, 'id="main-content"')
+        self.assertContains(response, 'id="root"')
+        self.assertRegex(response.content.decode(), r'/static/console/react/assets/index-[^" ]+\.css')
+        self.assertRegex(response.content.decode(), r'/static/console/react/assets/index-[^" ]+\.js')

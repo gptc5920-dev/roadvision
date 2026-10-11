@@ -1,13 +1,31 @@
 from django.urls import path
 from django.views.generic import RedirectView
 
-from . import views
+from . import api, views
 
 
 urlpatterns = [
     path("", views.landing, name="home"),
     path("healthz/", views.health, name="health"),
     path("livez/", views.liveness, name="liveness"),
+    path("api/session/", api.session_api, name="api_session"),
+    path("api/auth/login/", api.login_api, name="api_login"),
+    path("api/auth/logout/", api.logout_api, name="api_logout"),
+    path("api/overview/", api.overview_api, name="api_overview"),
+    path("api/reports/", api.reports_api, name="api_reports"),
+    path("api/fleet/", api.fleet_api, name="api_fleet"),
+    path("api/detections/", api.detections_api, name="api_detections"),
+    path("api/analyzer/", api.analyzer_api, name="api_analyzer"),
+    path("api/dataset/", api.dataset_api, name="api_dataset"),
+    path("api/sources/", api.sources_api, name="api_sources"),
+    path("api/personnel/", api.personnel_api, name="api_personnel"),
+    path("api/settings/", api.settings_api, name="api_settings"),
+    path("api/actions/analyzer/", api.analyzer_action_api, name="api_analyzer_action"),
+    path("api/actions/dataset/", api.dataset_action_api, name="api_dataset_action"),
+    path("api/actions/modules/<slug:module>/", api.module_action_api, name="api_module_action"),
+    path("login", views.spa_shell, name="spa_login"),
+    path("app", views.spa_shell, name="spa_app"),
+    path("app/<path:unused>", views.spa_shell, name="spa_route"),
     path("auth/", views.auth_page, name="auth"),
     path("logout/", views.sign_out, name="logout"),
     path("_authenticated/", views.authenticated_index, name="authenticated_index"),

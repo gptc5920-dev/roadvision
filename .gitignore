@@ -9,3 +9,4 @@ db.sqlite3
 staticfiles/
 media/
 backups/
+node_modules/

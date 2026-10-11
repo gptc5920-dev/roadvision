@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from django.conf import settings
-from django.db.models import Count
+from django.db.models import Count, Q
 
 from .models import DatasetImage, DatasetImageStatus, DatasetSplit, TrainingSession
 from .storage_paths import resolve_model_artifact
@@ -33,8 +33,22 @@ def dataset_readiness():
         status=DatasetImageStatus.APPROVED,
     )
     positives = approved.annotate(annotation_count=Count("annotations")).filter(annotation_count__gt=0)
-    counts = {split: approved.filter(split=split).count() for split in DatasetSplit.values}
-    positive_counts = {split: positives.filter(split=split).count() for split in DatasetSplit.values}
+    split_counts = approved.aggregate(
+        **{
+            f"images_{split}": Count("id", filter=Q(split=split), distinct=True)
+            for split in DatasetSplit.values
+        },
+        **{
+            f"positives_{split}": Count(
+                "id",
+                filter=Q(split=split, annotations__isnull=False),
+                distinct=True,
+            )
+            for split in DatasetSplit.values
+        },
+    )
+    counts = {split: split_counts[f"images_{split}"] for split in DatasetSplit.values}
+    positive_counts = {split: split_counts[f"positives_{split}"] for split in DatasetSplit.values}
     required = {
         DatasetSplit.TRAIN: settings.DATASET_MIN_TRAIN_IMAGES,
         DatasetSplit.VAL: settings.DATASET_MIN_VAL_IMAGES,
@@ -123,6 +137,8 @@ def model_readiness(session=None):
     if session is None:
         errors.append("No active validated model is registered.")
     else:
+        if session.status != TrainingSession.Status.COMPLETE or not session.is_validated:
+            errors.append("Selected model must be complete and validated.")
         model_path = resolve_model_artifact(session.model_file)
         if not model_path.is_file():
             errors.append(f"Model artifact is missing: {model_path}")

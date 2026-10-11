@@ -114,6 +114,12 @@ class ReadinessTests(TestCase):
                 model_task="segment",
             )
             self.assertTrue(model_readiness(session)["ready"])
+            session.is_validated = False
+            self.assertFalse(model_readiness(session)["ready"])
+            session.is_validated = True
+            session.status = TrainingSession.Status.RUNNING
+            self.assertFalse(model_readiness(session)["ready"])
+            session.status = TrainingSession.Status.COMPLETE
             artifact.write_bytes(b"artifact changed")
             self.assertFalse(model_readiness(session)["ready"])
             session.model_sha256 = hashlib.sha256(artifact.read_bytes()).hexdigest()

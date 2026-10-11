@@ -1,5 +1,7 @@
 import csv
 import hashlib
+import json
+import math
 import shutil
 import time
 from pathlib import Path
@@ -10,7 +12,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from console.models import AnalyzerConfiguration, DatasetImage, DatasetSplit, TrainingSession
-from console.readiness import dataset_readiness, training_dataset_manifest
+from console.readiness import dataset_readiness, model_readiness, training_dataset_manifest
 
 
 AUGMENTATION_PROFILES = {
@@ -70,14 +72,17 @@ def metrics_from_validator(metrics):
         for name in names:
             value = results.get(name)
             if value is not None:
-                return float(value)
+                value = float(value)
+                if not math.isfinite(value) or not 0 <= value <= 1:
+                    raise CommandError("Segmentation evaluation returned invalid metrics.")
+                return value
         return None
 
     return {
-        "precision": pick("metrics/precision(M)", "metrics/precision(B)", "metrics/precision"),
-        "recall": pick("metrics/recall(M)", "metrics/recall(B)", "metrics/recall"),
-        "map50": pick("metrics/mAP50(M)", "metrics/mAP50(B)", "metrics/mAP50"),
-        "map5095": pick("metrics/mAP50-95(M)", "metrics/mAP50-95(B)", "metrics/mAP50-95"),
+        "precision": pick("metrics/precision(M)"),
+        "recall": pick("metrics/recall(M)"),
+        "map50": pick("metrics/mAP50(M)"),
+        "map5095": pick("metrics/mAP50-95(M)"),
     }
 
 
@@ -136,8 +141,16 @@ def validate_session_images(images, manifest_by_id=None):
         if positive_counts[split] == 0
     )
     invalid_masks = []
+    groups = {}
     for image in images:
         entry = manifest_by_id.get(image.id, {}) if manifest_by_id else {}
+        group = entry.get("source_group") or image.source_group or f"image-{image.id}"
+        groups.setdefault(group, set()).add(image.split)
+        if entry:
+            labels = entry.get("labels", [])
+            digest = hashlib.sha256(json.dumps(labels, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+            if entry.get("label_sha256") != digest:
+                errors.append(f"snapshot label hash mismatch: {image.dataset_id}")
         if "segmentation_annotation_count" in entry:
             if entry.get("segmentation_annotation_count") != entry.get("annotation_count"):
                 invalid_masks.append(image.dataset_id)
@@ -145,12 +158,17 @@ def validate_session_images(images, manifest_by_id=None):
             invalid_masks.append(image.dataset_id)
     if invalid_masks:
         errors.append("snapshot contains box-only annotations: " + ", ".join(invalid_masks[:10]))
+    if any(len(splits) > 1 for splits in groups.values()):
+        errors.append("snapshot source groups span multiple splits")
     if errors:
         raise CommandError("Dataset snapshot readiness gate failed: " + "; ".join(errors))
 
 
 def write_dataset_for_session(session):
-    root = Path(settings.MEDIA_ROOT) / "training_dataset" / "yolo_exports" / f"session_{session.pk}"
+    export_base = (Path(settings.MEDIA_ROOT) / "training_dataset" / "yolo_exports").resolve()
+    root = (export_base / f"session_{session.pk}").resolve()
+    if root.parent != export_base:
+        raise CommandError("Training export must stay inside the configured export directory.")
     dataset_root = root / "dataset"
     if root.exists():
         shutil.rmtree(root)
@@ -209,7 +227,7 @@ def read_latest_metrics(results_csv):
         rows = list(csv.DictReader(handle))
     if not rows:
         return {}
-    row = rows[-1]
+    row = {key.strip(): value for key, value in rows[-1].items()}
 
     def pick(*names):
         for name in names:
@@ -221,10 +239,10 @@ def read_latest_metrics(results_csv):
     return {
         "train_loss": pick("train/box_loss"),
         "val_loss": pick("val/box_loss"),
-        "precision": pick("metrics/precision(B)", "metrics/precision"),
-        "recall": pick("metrics/recall(B)", "metrics/recall"),
-        "map50": pick("metrics/mAP50(B)", "metrics/mAP50"),
-        "map5095": pick("metrics/mAP50-95(B)", "metrics/mAP50-95"),
+        "precision": pick("metrics/precision(M)"),
+        "recall": pick("metrics/recall(M)"),
+        "map50": pick("metrics/mAP50(M)"),
+        "map5095": pick("metrics/mAP50-95(M)"),
     }
 
 
@@ -345,6 +363,8 @@ class Command(BaseCommand):
                 exist_ok=True,
             )
             test_metrics = metrics_from_validator(test_results)
+            if any(value is None for value in test_metrics.values()):
+                raise CommandError("Held-out evaluation did not return segmentation-mask metrics.")
             session.precision = test_metrics["precision"]
             session.recall = test_metrics["recall"]
             session.map50 = test_metrics["map50"]
@@ -383,14 +403,21 @@ class Command(BaseCommand):
             )
             session.status = TrainingSession.Status.COMPLETE
             session.progress = 100
-            session.current_epoch = session.epochs
             session.finished_at = timezone.now()
+            readiness = model_readiness(session)
+            if not readiness["ready"]:
+                session.is_validated = False
+                session.validation_notes = "; ".join(readiness["errors"])
             session.save()
             if session.is_validated:
-                TrainingSession.objects.exclude(pk=session.pk).update(is_active_video_model=False)
-                session.is_active_video_model = True
-                session.save(update_fields=["is_active_video_model"])
-                AnalyzerConfiguration.objects.update_or_create(pk=1, defaults={"model_session": session})
+                with transaction.atomic():
+                    configuration, _ = AnalyzerConfiguration.objects.get_or_create(pk=1)
+                    configuration = AnalyzerConfiguration.objects.select_for_update().get(pk=configuration.pk)
+                    TrainingSession.objects.exclude(pk=session.pk).update(is_active_video_model=False)
+                    session.is_active_video_model = True
+                    session.save(update_fields=["is_active_video_model"])
+                    configuration.model_session = session
+                    configuration.save(update_fields=["model_session", "updated_at"])
             self.stdout.write(self.style.SUCCESS(f"Training session {session.pk} complete."))
         except Exception as exc:
             session.status = TrainingSession.Status.FAILED

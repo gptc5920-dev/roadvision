@@ -10,6 +10,27 @@ from console.models import AnalyzerConfiguration, TrainingSession
 
 
 class BundledModelBootstrapTests(TestCase):
+    @override_settings(MODEL_REQUIRE_LOCAL_EVALUATION=False)
+    def test_bootstrap_preserves_ready_replacement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "replacement.pt"
+            artifact.write_bytes(b"replacement")
+            session = TrainingSession.objects.create(
+                status=TrainingSession.Status.COMPLETE,
+                is_validated=True,
+                is_active_video_model=True,
+                model_task="segment",
+                model_file=str(artifact),
+                model_sha256=hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                map50=0.9,
+            )
+            AnalyzerConfiguration.objects.update_or_create(pk=1, defaults={"model_session": session})
+            call_command("bootstrap_bundled_model", verbosity=0)
+            self.assertEqual(TrainingSession.objects.count(), 1)
+            self.assertEqual(AnalyzerConfiguration.objects.get(pk=1).model_session_id, session.pk)
+            session.refresh_from_db()
+            self.assertTrue(session.is_active_video_model)
+
     @override_settings(ALLOW_DETECTION_MODE=True)
     def test_bootstrap_creates_and_idempotently_activates_bundled_model(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

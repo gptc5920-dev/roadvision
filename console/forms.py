@@ -3,6 +3,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from urllib.parse import urlparse
@@ -17,7 +18,10 @@ from .models import (
     TrainingSession,
     VideoAnalysis,
     VideoDatasetSample,
+    VideoDetectionSeverity,
+    VideoPotholeTrack,
     VideoSourceType,
+    VideoTrackReviewStatus,
     VideoVisualizerMode,
 )
 from .readiness import training_dataset_manifest
@@ -81,24 +85,60 @@ class PersonnelAccountForm(forms.Form):
         return cleaned
 
     def save(self):
+        with transaction.atomic():
+            user_model = get_user_model()
+            email = self.cleaned_data["email"]
+            full_name = self.cleaned_data["full_name"].strip()
+            name_parts = full_name.split(None, 1)
+            user = user_model.objects.create_user(
+                username=email,
+                email=email,
+                password=self.cleaned_data["temporary_password"],
+                first_name=name_parts[0] if name_parts else "",
+                last_name=name_parts[1] if len(name_parts) > 1 else "",
+            )
+            profile = user.profile
+            profile.full_name = full_name
+            profile.save(update_fields=["full_name"])
+            user.console_role.role = self.cleaned_data["role"]
+            user.console_role.save(update_fields=["role"])
+        return user
+
+
+class ProfileSettingsForm(forms.Form):
+    full_name = forms.CharField(max_length=255)
+    email = forms.EmailField(max_length=254)
+
+    def __init__(self, *args, user, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+
+    def clean_email(self):
+        email = self.cleaned_data["email"].strip().lower()
         user_model = get_user_model()
+        duplicate = (
+            user_model.objects.exclude(pk=self.user.pk)
+            .filter(Q(username__iexact=email) | Q(email__iexact=email))
+            .exists()
+        )
+        if duplicate:
+            raise forms.ValidationError("An account with this email already exists.")
+        return email
+
+    def save(self):
         email = self.cleaned_data["email"]
         full_name = self.cleaned_data["full_name"].strip()
         name_parts = full_name.split(None, 1)
-        user = user_model.objects.create_user(
-            username=email,
-            email=email,
-            password=self.cleaned_data["temporary_password"],
-            first_name=name_parts[0] if name_parts else "",
-            last_name=name_parts[1] if len(name_parts) > 1 else "",
-        )
-        profile = user.profile
-        profile.full_name = full_name
-        profile.email = email
-        profile.save(update_fields=["full_name", "email"])
-        user.console_role.role = self.cleaned_data["role"]
-        user.console_role.save(update_fields=["role"])
-        return user
+        with transaction.atomic():
+            self.user.username = email
+            self.user.email = email
+            self.user.first_name = name_parts[0] if name_parts else ""
+            self.user.last_name = name_parts[1] if len(name_parts) > 1 else ""
+            self.user.save(update_fields=["username", "email", "first_name", "last_name"])
+            profile = self.user.profile
+            profile.full_name = full_name
+            profile.save(update_fields=["full_name"])
+        return self.user
 
 
 class FleetDeviceForm(forms.Form):
@@ -143,6 +183,89 @@ class FleetDeviceForm(forms.Form):
             },
         )
         return device
+
+
+class VideoDatasetSampleForm(forms.Form):
+    name = forms.CharField(max_length=160)
+    road_name = forms.CharField(max_length=160)
+    barangay = forms.CharField(max_length=120, required=False)
+    city = forms.CharField(max_length=120)
+    file_name = forms.CharField(max_length=180, required=False)
+    duration_seconds = forms.IntegerField(min_value=1, max_value=604800, initial=40)
+    frame_count = forms.IntegerField(min_value=1, max_value=2_147_483_647, initial=879)
+    fps = forms.DecimalField(min_value=0.01, max_value=999.99, max_digits=5, decimal_places=2, initial=59)
+    notes = forms.CharField(max_length=2000, required=False, widget=forms.Textarea)
+
+    def save(self):
+        return VideoDatasetSample.objects.create(
+            name=self.cleaned_data["name"].strip(),
+            road_name=self.cleaned_data["road_name"].strip(),
+            barangay=self.cleaned_data.get("barangay", "").strip(),
+            city=self.cleaned_data["city"].strip(),
+            file_name=self.cleaned_data.get("file_name", "").strip(),
+            duration_seconds=self.cleaned_data["duration_seconds"],
+            frame_count=self.cleaned_data["frame_count"],
+            fps=self.cleaned_data["fps"],
+            notes=self.cleaned_data.get("notes", "").strip(),
+        )
+
+
+class TrackReviewForm(forms.Form):
+    review_status = forms.ChoiceField(choices=VideoTrackReviewStatus.choices)
+    severity = forms.ChoiceField(choices=VideoDetectionSeverity.choices)
+    road_section = forms.CharField(max_length=180, required=False)
+    remarks = forms.CharField(max_length=2000, required=False, widget=forms.Textarea)
+    measured_depth_mm = forms.DecimalField(
+        min_value=0,
+        max_value=999999.9,
+        max_digits=7,
+        decimal_places=1,
+        required=False,
+    )
+    latitude = forms.DecimalField(
+        min_value=-90,
+        max_value=90,
+        max_digits=10,
+        decimal_places=7,
+        required=False,
+    )
+    longitude = forms.DecimalField(
+        min_value=-180,
+        max_value=180,
+        max_digits=10,
+        decimal_places=7,
+        required=False,
+    )
+
+    def save(self, track):
+        track.review_status = self.cleaned_data["review_status"]
+        track.severity = self.cleaned_data["severity"]
+        track.road_section = self.cleaned_data.get("road_section", "").strip()
+        track.remarks = self.cleaned_data.get("remarks", "").strip()
+        track.measured_depth_mm = self.cleaned_data.get("measured_depth_mm")
+        track.latitude = self.cleaned_data.get("latitude")
+        track.longitude = self.cleaned_data.get("longitude")
+        if track.measured_depth_mm is not None:
+            track.measurement_basis = VideoPotholeTrack.MeasurementBasis.FIELD_MEASURED
+        elif track.measurement_basis == VideoPotholeTrack.MeasurementBasis.FIELD_MEASURED:
+            track.measurement_basis = (
+                VideoPotholeTrack.MeasurementBasis.CALIBRATED
+                if track.analysis.calibration_m_per_pixel
+                else VideoPotholeTrack.MeasurementBasis.VISUAL_ESTIMATE
+            )
+        track.save(
+            update_fields=[
+                "review_status",
+                "severity",
+                "road_section",
+                "remarks",
+                "measured_depth_mm",
+                "measurement_basis",
+                "latitude",
+                "longitude",
+            ]
+        )
+        return track
 
 
 class VideoAnalysisForm(forms.Form):
@@ -240,7 +363,8 @@ class TrainingConfigForm(forms.Form):
     batch_size = forms.IntegerField(min_value=1, max_value=256, initial=16)
     image_size = forms.IntegerField(min_value=128, max_value=2048, initial=512)
     learning_rate = forms.DecimalField(min_value=0.000001, max_digits=8, decimal_places=6, initial=0.001)
-    device = forms.CharField(max_length=60, initial="cpu")
+    device = forms.RegexField(regex=r"^(auto|cpu|mps|\d+(,\d+)*)$", max_length=60, initial="cpu",
+                             error_messages={"invalid": "Use auto, cpu, mps, or GPU indices such as 0 or 0,1."})
     patience = forms.IntegerField(min_value=0, max_value=300, initial=30)
     workers = forms.IntegerField(min_value=0, max_value=32, initial=2)
     optimizer = forms.ChoiceField(choices=OPTIMIZER_CHOICES, initial="AdamW")

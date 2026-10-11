@@ -8,6 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from console.models import AnalyzerConfiguration, TrainingSession
+from console.readiness import model_readiness
 from console.storage_paths import portable_model_artifact_value
 
 
@@ -37,6 +38,13 @@ class Command(BaseCommand):
     help = "Idempotently register and activate RoadVision's bundled validated detection model."
 
     def handle(self, *args, **options):
+        configuration = AnalyzerConfiguration.objects.filter(pk=1).first()
+        readiness = model_readiness(configuration.model_session if configuration else None)
+        if readiness["ready"]:
+            self.stdout.write(self.style.SUCCESS(
+                f"Keeping ready model session {readiness['session'].pk}; bundled fallback is not needed."
+            ))
+            return
         if not settings.ALLOW_DETECTION_MODE:
             self.stdout.write(
                 self.style.WARNING(

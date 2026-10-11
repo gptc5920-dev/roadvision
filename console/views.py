@@ -26,9 +26,10 @@ from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.core.cache import cache
 from django.core.files.base import ContentFile
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Min, Q
 from django.http import Http404, HttpResponse, JsonResponse, StreamingHttpResponse
-from django.shortcuts import get_object_or_404, redirect, render
+from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils.text import get_valid_filename
 from django.utils import timezone
@@ -42,9 +43,12 @@ from .forms import (
     FleetDeviceForm,
     GroundTruthCountForm,
     PersonnelAccountForm,
+    ProfileSettingsForm,
     SignInForm,
+    TrackReviewForm,
     TrainingConfigForm,
     VideoAnalysisForm,
+    VideoDatasetSampleForm,
     VideoVisualizerUploadForm,
 )
 from .ml import run_analysis
@@ -192,7 +196,17 @@ def video_analysis_progress(analysis):
 
 
 def landing(request):
-    return render(request, "console/landing.html")
+    return spa_shell(request)
+
+
+def spa_shell(request, unused=""):
+    """Serve Vite's built HTML for client-side routes."""
+    index = settings.STATIC_DIRECTORY / "console" / "react" / "index.html"
+    if not index.is_file():
+        return HttpResponse("Frontend build is missing. Run npm run build.", status=503)
+    response = HttpResponse(index.read_bytes(), content_type="text/html; charset=utf-8")
+    response["Cache-Control"] = "no-cache"
+    return response
 
 
 def health(request):
@@ -232,28 +246,30 @@ def auth_page(request):
     elif request.method == "POST":
         cache.set(throttle_key, attempts + 1, settings.LOGIN_LOCKOUT_SECONDS)
 
-    return render(request, "console/auth.html", {"form": form})
+    if request.method == "POST":
+        return JsonResponse({"error": "; ".join(form.non_field_errors()) or "Invalid sign-in."}, status=400)
+    return redirect("/login")
 
 
 def sign_out(request):
     logout(request)
-    return redirect("home")
+    return redirect("/login")
 
 
 @login_required
 def authenticated_index(request):
-    return redirect("admin_video_analyzer")
+    return redirect("/app/analyzer")
 
 
 def not_found_redirect(request, unused):
-    return redirect("home")
+    return spa_shell(request, unused)
 
 
 def staff_required(view_func):
     @login_required
     def wrapper(request, *args, **kwargs):
         if not is_staff_role(request.user):
-            return render(request, "console/access_pending.html", status=403)
+            return redirect("/app/access-pending")
         return view_func(request, *args, **kwargs)
 
     return wrapper
@@ -281,7 +297,10 @@ def audit_dataset(user, action, message, dataset_image=None, dataset_version=Non
     )
 
 
+@transaction.atomic
 def create_dataset_version(user, notes="", train_percent=70, val_percent=20, test_percent=10):
+    AnalyzerConfiguration.objects.get_or_create(pk=1)
+    AnalyzerConfiguration.objects.select_for_update().get(pk=1)
     latest = DatasetVersion.objects.order_by("-version_number").first()
     version_number = latest.version_number + 1 if latest else 1
     active_images = DatasetImage.objects.filter(is_archived=False)
@@ -305,8 +324,14 @@ def current_dataset_version():
 
 def dataset_summary():
     images = DatasetImage.objects.filter(is_archived=False)
-    total_images = images.count()
-    annotated_images = images.filter(annotations__isnull=False).distinct().count()
+    summary = images.aggregate(
+        total_images=Count("id", distinct=True),
+        annotated_images=Count("id", filter=Q(annotations__isnull=False), distinct=True),
+        unannotated_images=Count("id", filter=Q(status=DatasetImageStatus.UNANNOTATED), distinct=True),
+        approved_images=Count("id", filter=Q(status=DatasetImageStatus.APPROVED), distinct=True),
+        rejected_images=Count("id", filter=Q(status=DatasetImageStatus.REJECTED), distinct=True),
+        total_potholes=Count("annotations"),
+    )
     current_version = current_dataset_version()
     latest_complete = TrainingSession.objects.filter(
         status=TrainingSession.Status.COMPLETE,
@@ -314,12 +339,7 @@ def dataset_summary():
         local_map50__isnull=False,
     ).first()
     return {
-        "total_images": total_images,
-        "annotated_images": annotated_images,
-        "unannotated_images": images.filter(status=DatasetImageStatus.UNANNOTATED).count(),
-        "approved_images": images.filter(status=DatasetImageStatus.APPROVED).count(),
-        "rejected_images": images.filter(status=DatasetImageStatus.REJECTED).count(),
-        "total_potholes": PotholeAnnotation.objects.filter(image__is_archived=False).count(),
+        **summary,
         "current_dataset_version": current_version.version_number if current_version else 0,
         "latest_model_accuracy": (
             latest_complete.local_map50
@@ -912,7 +932,12 @@ def save_dataset_image_from_bytes(
     safe_stem = get_valid_filename(os.path.splitext(filename)[0] or record.dataset_id)
     extension = metadata.get("extension") or os.path.splitext(filename)[1].lower() or ".jpg"
     record.image.save(f"{record.dataset_id}-{safe_stem}{extension}", ContentFile(data), save=False)
-    record.save()
+    try:
+        with transaction.atomic():
+            record.save()
+    except IntegrityError:
+        record.image.delete(save=False)
+        raise
     return record
 
 
@@ -948,7 +973,7 @@ def auto_label_dataset_images(images, user):
         source_bgr = cv2.cvtColor(np.asarray(source), cv2.COLOR_RGB2BGR)
         annotations = []
         preview_frame = source_bgr.copy()
-        if result.boxes is not None:
+        if result.boxes is not None and len(result.boxes):
             if result.masks is None:
                 raise ValueError("The active model returned boxes without instance masks.")
             xywhn = result.boxes.xywhn.cpu().tolist()
@@ -1017,7 +1042,10 @@ def auto_label_dataset_images(images, user):
     return total_annotations
 
 
+@transaction.atomic
 def queue_automatic_training(user, dataset_version):
+    AnalyzerConfiguration.objects.get_or_create(pk=1)
+    configuration = AnalyzerConfiguration.objects.select_for_update().get(pk=1)
     readiness = dataset_readiness()
     if not readiness["ready"]:
         return None
@@ -1035,8 +1063,7 @@ def queue_automatic_training(user, dataset_version):
             TrainingSession.Status.RUNNING,
             TrainingSession.Status.COMPLETE,
         ]
-    ).order_by("-created_at")[:10]
-    configuration = analyzer_configuration()
+    ).order_by("-created_at")
     training_model = configuration.training_model or settings.AUTO_TRAIN_MODEL
     for session in recent_sessions:
         existing = [
@@ -1089,7 +1116,7 @@ def parse_annotation_payload(payload):
         if not isinstance(item, dict):
             raise ValueError("Each annotation must be a polygon object.")
         raw_points = item.get("segmentation_points") or []
-        if len(raw_points) < 3:
+        if not isinstance(raw_points, list) or len(raw_points) < 3:
             raise ValueError("Every pothole annotation must include a polygon mask with at least three points.")
         points = []
         for point in raw_points:
@@ -1541,7 +1568,7 @@ def video_analyzer(request):
         "detections_json": detections_json,
         "engineering_recommendation": engineering_recommendation,
     }
-    return render(request, "console/video_analyzer.html", context)
+    return redirect("/app/analyzer")
 
 
 @staff_required
@@ -1661,6 +1688,7 @@ def training_dataset_module(request):
                     and label_readiness["session"].model_task == "segment"
                 )
                 validated = []
+                seen_hashes = set()
                 skipped = []
                 for upload in files:
                     try:
@@ -1668,10 +1696,11 @@ def training_dataset_module(request):
                     except Exception as exc:
                         skipped.append(f"{upload.name}: {exc}")
                         continue
-                    if DatasetImage.objects.filter(file_hash=metadata["file_hash"]).exists():
+                    if metadata["file_hash"] in seen_hashes or DatasetImage.objects.filter(file_hash=metadata["file_hash"]).exists():
                         skipped.append(f"{upload.name}: duplicate image skipped")
                         continue
                     validated.append((upload.name, metadata))
+                    seen_hashes.add(metadata["file_hash"])
                 created = []
                 for filename, metadata in validated:
                     source_group = (
@@ -1687,8 +1716,8 @@ def training_dataset_module(request):
                         upload_form.cleaned_data["val_percent"],
                         upload_form.cleaned_data["test_percent"],
                     )
-                    created.append(
-                        save_dataset_image_from_bytes(
+                    try:
+                        record = save_dataset_image_from_bytes(
                             metadata["data"],
                             filename,
                             metadata,
@@ -1696,7 +1725,12 @@ def training_dataset_module(request):
                             request.user,
                             source_group=source_group,
                         )
-                    )
+                    except IntegrityError:
+                        if not DatasetImage.objects.filter(file_hash=metadata["file_hash"]).exists():
+                            raise
+                        skipped.append(f"{filename}: duplicate image skipped")
+                        continue
+                    created.append(record)
                 if created:
                     annotation_count = 0
                     auto_label_error = ""
@@ -1742,7 +1776,8 @@ def training_dataset_module(request):
                     elif auto_label_error:
                         messages.error(request, f"Automatic mask proposal failed; the images were retained for manual annotation. {auto_label_error}")
                 if skipped:
-                    messages.error(request, "Skipped files: " + " | ".join(skipped[:5]))
+                    notifier = messages.warning if created else messages.error
+                    notifier(request, "Skipped files: " + " | ".join(skipped[:5]))
                 return redirect(f"{request.path}?tab=upload")
             messages.error(request, "Dataset split settings are invalid.")
             return redirect(f"{request.path}?tab=upload")
@@ -1770,12 +1805,15 @@ def training_dataset_module(request):
                 ]
             )
             image.status = DatasetImageStatus.FULL if boxes else DatasetImageStatus.UNANNOTATED
+            image.reviewed_by = None
+            image.reviewed_at = None
+            image.review_notes = ""
             if image.labeled_preview:
                 image.labeled_preview.delete(save=False)
                 image.labeled_preview = ""
             version = create_dataset_version(request.user, notes=f"Annotations updated for {image.dataset_id}")
             image.dataset_version = version
-            image.save(update_fields=["status", "dataset_version", "labeled_preview"])
+            image.save(update_fields=["status", "dataset_version", "labeled_preview", "reviewed_by", "reviewed_at", "review_notes"])
             audit_dataset(request.user, "annotate", f"Saved {len(boxes)} pothole annotations for {image.dataset_id}.", image, version)
             messages.success(request, f"Saved {len(boxes)} YOLO annotations for {image.dataset_id}.")
             return redirect(f"{request.path}?tab=annotate&image={image.pk}")
@@ -2024,7 +2062,7 @@ def training_dataset_module(request):
         "dataset_readiness": dataset_readiness(),
         "model_readiness": model_readiness(),
     }
-    return render(request, "console/training_dataset.html", context)
+    return redirect("/app/dataset")
 
 
 @staff_required
@@ -2293,25 +2331,13 @@ def video_visualizer(request):
 
         if action == "review_track":
             track = get_object_or_404(VideoPotholeTrack, pk=request.POST.get("track_id"))
-            status = request.POST.get("review_status")
-            severity = request.POST.get("severity")
-            if status in VideoTrackReviewStatus.values:
-                track.review_status = status
-            if severity in [choice[0] for choice in track._meta.get_field("severity").choices]:
-                track.severity = severity
-            track.road_section = request.POST.get("road_section", "").strip()
-            track.remarks = request.POST.get("remarks", "").strip()
-            depth = request.POST.get("measured_depth_mm", "").strip()
-            lat = request.POST.get("latitude", "").strip()
-            lng = request.POST.get("longitude", "").strip()
-            track.measured_depth_mm = Decimal(depth) if depth else None
-            if depth:
-                track.measurement_basis = VideoPotholeTrack.MeasurementBasis.FIELD_MEASURED
-            track.latitude = Decimal(lat) if lat else None
-            track.longitude = Decimal(lng) if lng else None
-            track.save(update_fields=["review_status", "severity", "road_section", "remarks", "measured_depth_mm", "measurement_basis", "latitude", "longitude"])
-            recalculate_analysis_potholes(track.analysis)
-            messages.success(request, f"Track P{track.track_id} updated.")
+            form = TrackReviewForm(request.POST)
+            if form.is_valid():
+                form.save(track)
+                recalculate_analysis_potholes(track.analysis)
+                messages.success(request, f"Track P{track.track_id} updated.")
+            else:
+                messages.error(request, "Correct the invalid track review values.")
             return redirect(f"{request.path}?analysis={track.analysis_id}")
 
         if action == "merge_tracks":
@@ -2543,7 +2569,10 @@ def video_visualizer(request):
             "lowest_confidence": min(confidence_values) if confidence_values else None,
         },
     }
-    return render(request, "console/video_visualizer.html", context)
+    destination = "/app/analyzer"
+    if selected_analysis:
+        destination += f"?analysis={selected_analysis.pk}"
+    return redirect(destination)
 
 
 @staff_required
@@ -2836,33 +2865,23 @@ def module_placeholder(request, module):
                         "roles": AppRole.choices,
                         "personnel_account_form": personnel_account_form,
                     }
-                    return render(request, "console/module_placeholder.html", context, status=400)
+                    return JsonResponse(
+                        {"error": "Correct the account details below.", "fields": personnel_account_form.errors},
+                        status=400,
+                    )
         elif action == "review_track":
             track = get_object_or_404(VideoPotholeTrack, pk=request.POST.get("track_id"))
-            status = request.POST.get("review_status")
-            severity = request.POST.get("severity")
-            if status in VideoTrackReviewStatus.values:
-                track.review_status = status
-            if severity in [choice[0] for choice in track._meta.get_field("severity").choices]:
-                track.severity = severity
-            track.road_section = request.POST.get("road_section", "").strip()
-            track.remarks = request.POST.get("remarks", "").strip()
-            depth = request.POST.get("measured_depth_mm", "").strip()
-            lat = request.POST.get("latitude", "").strip()
-            lng = request.POST.get("longitude", "").strip()
-            track.measured_depth_mm = Decimal(depth) if depth else None
-            if depth:
-                track.measurement_basis = VideoPotholeTrack.MeasurementBasis.FIELD_MEASURED
-            track.latitude = Decimal(lat) if lat else None
-            track.longitude = Decimal(lng) if lng else None
-            track.save(
-                update_fields=[
-                    "review_status", "severity", "road_section", "remarks",
-                    "measured_depth_mm", "measurement_basis", "latitude", "longitude",
-                ]
-            )
-            recalculate_analysis_potholes(track.analysis)
-            messages.success(request, f"Defect A{track.analysis_id}-P{track.track_id} updated.")
+            form = TrackReviewForm(request.POST)
+            if form.is_valid():
+                form.save(track)
+                recalculate_analysis_potholes(track.analysis)
+                messages.success(request, f"Defect A{track.analysis_id}-P{track.track_id} updated.")
+            else:
+                messages.error(request, "Correct the invalid defect review values.")
+                return JsonResponse(
+                    {"error": "Correct the invalid defect review values.", "fields": form.errors},
+                    status=400,
+                )
         elif action == "remove_track":
             track = get_object_or_404(VideoPotholeTrack, pk=request.POST.get("track_id"))
             analysis_id = track.analysis_id
@@ -2990,7 +3009,10 @@ def module_placeholder(request, module):
                         "dataset_readiness": dataset_readiness(),
                         "training_sessions": TrainingSession.objects.filter(status=TrainingSession.Status.COMPLETE, is_validated=True),
                     }
-                    return render(request, "console/module_placeholder.html", context, status=400)
+                    return JsonResponse(
+                        {"error": "Correct the invalid Video Analyzer settings.", "fields": analyzer_settings_form.errors},
+                        status=400,
+                    )
         elif action == "update_report_status":
             report = get_object_or_404(PotholeReport, pk=request.POST.get("report_id"))
             status = request.POST.get("status")
@@ -2998,6 +3020,8 @@ def module_placeholder(request, module):
                 report.status = status
                 report.save(update_fields=["status"])
                 messages.success(request, f"Report #{report.pk} moved to {report.get_status_display()}.")
+            else:
+                messages.error(request, "Select a valid report status.")
         elif action == "save_fleet_device":
             if not is_admin(request.user):
                 messages.error(request, "Only administrators can register or update fleet cameras.")
@@ -3154,18 +3178,16 @@ def module_placeholder(request, module):
                 messages.success(request, f"Analysis complete for {sample.name} with {analysis.events.count()} detections.")
             return redirect("admin_video_analyzer_explicit")
         elif action == "add_sample":
-            VideoDatasetSample.objects.create(
-                name=request.POST.get("name", "").strip() or "Untitled sample",
-                road_name=request.POST.get("road_name", "").strip() or "Unassigned road",
-                barangay=request.POST.get("barangay", "").strip(),
-                city=request.POST.get("city", "").strip() or "Unassigned city",
-                file_name=request.POST.get("file_name", "").strip(),
-                duration_seconds=int(request.POST.get("duration_seconds") or 40),
-                frame_count=int(request.POST.get("frame_count") or 879),
-                fps=request.POST.get("fps") or 59,
-                notes=request.POST.get("notes", "").strip(),
-            )
-            messages.success(request, "Detection source added.")
+            form = VideoDatasetSampleForm(request.POST)
+            if form.is_valid():
+                form.save()
+                messages.success(request, "Detection source added.")
+            else:
+                messages.error(request, "Correct the invalid detection source values.")
+                return JsonResponse(
+                    {"error": "Correct the invalid detection source values.", "fields": form.errors},
+                    status=400,
+                )
         elif action == "update_role":
             if is_admin(request.user):
                 target = get_object_or_404(get_user_model(), pk=request.POST.get("user_id"))
@@ -3173,21 +3195,21 @@ def module_placeholder(request, module):
                 if role in AppRole.values:
                     UserRole.objects.update_or_create(user=target, defaults={"role": role})
                     messages.success(request, f"{target.email or target.username} role updated.")
+                else:
+                    messages.error(request, "Select a valid personnel role.")
             else:
                 messages.error(request, "Only admins can update personnel roles.")
         elif action == "update_profile":
-            profile = getattr(request.user, "profile", None)
-            full_name = request.POST.get("full_name", "").strip()
-            email = request.POST.get("email", "").strip().lower()
-            if profile:
-                profile.full_name = full_name
-                profile.email = email or profile.email
-                profile.save(update_fields=["full_name", "email"])
-            if email:
-                request.user.email = email
-                request.user.username = email
-                request.user.save(update_fields=["email", "username"])
-            messages.success(request, "Console settings saved.")
+            form = ProfileSettingsForm(request.POST, user=request.user)
+            if form.is_valid():
+                form.save()
+                messages.success(request, "Console profile saved.")
+            else:
+                messages.error(request, "Correct the invalid profile values.")
+                return JsonResponse(
+                    {"error": "Correct the invalid profile values.", "fields": form.errors},
+                    status=400,
+                )
         return redirect(request.path)
 
     reports = PotholeReport.objects.all()
@@ -3278,4 +3300,14 @@ def module_placeholder(request, module):
         "confirmed_defect_count": defect_tracks.filter(review_status=VideoTrackReviewStatus.CONFIRMED).count(),
         "critical_defect_count": defect_tracks.filter(severity="critical").count(),
     }
-    return render(request, "console/module_placeholder.html", context)
+    route = {
+        "overview": "dashboard",
+        "live-map": "map",
+        "detections": "detections",
+        "dispatch": "dispatch",
+        "fleet-cams": "fleet",
+        "detection-sources": "sources",
+        "personnel": "personnel",
+        "settings": "settings",
+    }.get(module, "dashboard")
+    return redirect(f"/app/{route}")

@@ -18,6 +18,13 @@ shutdown() {
 
 trap shutdown EXIT INT TERM
 
+if [[ ! -s "static/console/react/index.html" ]] ||
+   ! compgen -G "static/console/react/assets/*.js" > /dev/null ||
+   ! compgen -G "static/console/react/assets/*.css" > /dev/null; then
+    echo "React production assets are missing. The Nixpacks build phase must run npm run build." >&2
+    exit 1
+fi
+
 python manage.py check --deploy
 python manage.py migrate --noinput
 python manage.py createcachetable "${DJANGO_CACHE_TABLE:-roadvision_cache}"

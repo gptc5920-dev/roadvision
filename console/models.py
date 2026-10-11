@@ -35,8 +35,11 @@ class DeviceStatus(models.TextChoices):
 class Profile(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile")
     full_name = models.CharField(max_length=255, blank=True)
-    email = models.EmailField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def email(self):
+        return self.user.email
 
     def __str__(self):
         return self.full_name or self.email
@@ -64,6 +67,10 @@ class PotholeReport(models.Model):
 
     class Meta:
         ordering = ["-detected_at"]
+        indexes = [
+            models.Index(fields=["status", "-detected_at"], name="rv_report_status_time"),
+            models.Index(fields=["severity"], name="rv_report_severity"),
+        ]
 
     def __str__(self):
         return f"{self.city} {self.severity} report"
@@ -83,6 +90,7 @@ class FleetDevice(models.Model):
 
     class Meta:
         ordering = ["city", "id"]
+        indexes = [models.Index(fields=["status"], name="rv_device_status")]
 
     def __str__(self):
         return self.name
@@ -309,6 +317,10 @@ class DatasetImage(models.Model):
 
     class Meta:
         ordering = ["-uploaded_at"]
+        indexes = [
+            models.Index(fields=["is_archived", "-uploaded_at"], name="rv_dataset_active_time"),
+            models.Index(fields=["status", "split"], name="rv_dataset_status_split"),
+        ]
 
     @property
     def pothole_count(self):
@@ -426,6 +438,12 @@ class TrainingSession(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["status", "is_validated", "-created_at"],
+                name="rv_training_gate_time",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.model_name} on {self.dataset_version or 'dataset'}"
@@ -600,6 +618,10 @@ class VideoVisualizerAnalysis(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "-created_at"], name="rv_analysis_status_time"),
+            models.Index(fields=["is_continuous", "status"], name="rv_analysis_live_status"),
+        ]
 
     @property
     def has_model_file(self):
@@ -653,6 +675,10 @@ class VideoPotholeTrack(models.Model):
         ordering = ["track_id"]
         constraints = [
             models.UniqueConstraint(fields=["analysis", "track_id"], name="unique_video_track_per_analysis"),
+        ]
+        indexes = [
+            models.Index(fields=["review_status"], name="rv_track_review"),
+            models.Index(fields=["severity"], name="rv_track_severity"),
         ]
 
     def __str__(self):

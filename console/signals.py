@@ -13,7 +13,7 @@ def ensure_console_identity(sender, instance, created, raw=False, **kwargs):
     full_name = f"{instance.first_name} {instance.last_name}".strip() or instance.username.split("@")[0]
     Profile.objects.get_or_create(
         user=instance,
-        defaults={"full_name": full_name, "email": instance.email or instance.username},
+        defaults={"full_name": full_name},
     )
 
     role = AppRole.ADMIN if not UserRole.objects.filter(role=AppRole.ADMIN).exists() else AppRole.VIEWER

@@ -87,7 +87,19 @@ def detect_live_frame(frame_bytes, configuration, confidence_threshold):
     try:
         device = str(configuration.device or "cpu").lower()
         if device == "auto":
-            device = "cpu"
+            import torch
+
+            device = "0" if torch.cuda.is_available() else "cpu"
+        allowed_labels = {"pothole"}
+        if configuration.include_road_damage:
+            allowed_labels.add("road_damage")
+        class_ids = [
+            int(class_id)
+            for class_id, name in model.names.items()
+            if str(name).strip().lower().replace("-", "_").replace(" ", "_") in allowed_labels
+        ]
+        if not class_ids:
+            raise LiveDetectionError("The active model has no supported road-damage classes.")
         try:
             result = model.predict(
                 source=image,
@@ -97,6 +109,7 @@ def detect_live_frame(frame_bytes, configuration, confidence_threshold):
                 device=device,
                 half=bool(configuration.half_precision and device != "cpu"),
                 max_det=configuration.max_detections,
+                classes=class_ids,
                 verbose=False,
                 save=False,
             )[0]
@@ -114,7 +127,7 @@ def detect_live_frame(frame_bytes, configuration, confidence_threshold):
         for index, (box, confidence, class_id) in enumerate(zip(boxes, confidences, class_ids)):
             raw_label = str(result.names.get(class_id, class_id))
             normalized_label = raw_label.strip().lower().replace("-", "_").replace(" ", "_")
-            if normalized_label not in {"pothole", "road_damage"}:
+            if normalized_label not in allowed_labels:
                 continue
             x1, y1, x2, y2 = [round(max(0.0, min(1.0, float(value))), 6) for value in box]
             polygon = (

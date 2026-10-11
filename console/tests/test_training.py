@@ -96,10 +96,10 @@ class TrainingPipelineTests(TestCase):
     def test_validator_metrics_are_normalized(self):
         validator = SimpleNamespace(
             results_dict={
-                "metrics/precision(B)": 0.81,
-                "metrics/recall(B)": 0.72,
-                "metrics/mAP50(B)": 0.77,
-                "metrics/mAP50-95(B)": 0.44,
+                "metrics/precision(M)": 0.81,
+                "metrics/recall(M)": 0.72,
+                "metrics/mAP50(M)": 0.77,
+                "metrics/mAP50-95(M)": 0.44,
             }
         )
         self.assertEqual(
@@ -182,11 +182,10 @@ class TrainingPipelineTests(TestCase):
 
     def test_freehand_editor_renders_and_saves_mask_points(self):
         image = DatasetImage.objects.get(split=DatasetSplit.TRAIN)
-        response = self.client.get(f"/_authenticated/admin/training-dataset/?tab=annotate&image={image.pk}")
-        self.assertContains(response, "Draw mask")
-        self.assertContains(response, "press and drag around the visible pothole boundary")
-        self.assertContains(response, 'id="undo-last-mask"')
-        self.assertContains(response, "Save masks to dataset")
+        dataset = self.client.get("/api/dataset/").json()
+        serialized = next(item for item in dataset["images"] if item["id"] == image.pk)
+        self.assertEqual(serialized["id"], image.pk)
+        self.assertIn("annotations", serialized)
         response = self.client.post(
             "/_authenticated/admin/training-dataset/",
             {

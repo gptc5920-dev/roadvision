@@ -16,6 +16,49 @@ RoadVision is a Django application for authenticated pothole-video analysis, eng
 
    `python manage.py run_yolo_training --watch`
 
+## Frontend development
+
+RoadVision uses a React single-page application built with Vite. React owns all
+public and authenticated routes under `/` and `/app/*`. Django exposes JSON
+under `/api/*` and continues to own sessions, permissions, validation, media,
+analysis jobs, and training jobs.
+
+The `frontend/` source is a Git submodule. Initialize it after cloning with
+`git submodule update --init --recursive` (or clone with `--recurse-submodules`).
+
+- Install frontend dependencies: `npm install`
+- Build the Django static assets: `npm run build`
+- The production bundle and HTML shell are written to `static/console/react/`.
+  Django serves that built HTML for frontend routes and WhiteNoise serves its
+  fingerprinted assets under `/static/console/react/`.
+
+Run `npm run build` after changing anything in `frontend/src/`. Coolify installs
+from `package-lock.json` and builds the bundle before Django collects static
+files.
+
+For local full-stack development without MariaDB, use the isolated SQLite
+profile in two terminals:
+
+```powershell
+python manage.py migrate --settings=config.settings_development
+python manage.py bootstrap_bundled_model --settings=config.settings_development
+python manage.py runserver 0.0.0.0:8000 --settings=config.settings_development
+```
+
+```powershell
+npm run dev -- --host 0.0.0.0
+```
+
+Vite proxies `/api`, `/media`, and authenticated download routes to Django on
+port 8000. Production remains configured for MariaDB and does not use this
+development database.
+
+The bundled YOLO11m model requires `ALLOW_DETECTION_MODE=true` in `.env`.
+Bootstrap verifies the weights and registers the fallback when no ready model is
+selected. It preserves an existing ready model, including a trained replacement.
+The bundled weights provide boxes, not native segmentation; their declared
+external validation score is not a local accuracy measurement.
+
 The ignored `.env` contains the local database-scoped `roadsense_app` credentials. Use `.env.example` as the production template. Never deploy with the local file or default administrator password.
 
 Administrators manage the active model, thresholds, tracker, device, overlays, and retry policy in **Settings**. **Video Analyzer** contains only survey upload/source fields and per-survey road, GPS, and calibration metadata.

@@ -76,20 +76,13 @@ class FleetCameraAnalyzerTests(TestCase):
         )
 
     def test_fleet_page_exposes_stream_and_live_capture_controls(self):
-        response = self.client.get("/_authenticated/admin/fleet-cams/")
+        response = self.client.get("/api/fleet/")
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Register or update a fleet camera")
-        self.assertContains(response, "Select Cavite Survey Cam 01 stream")
-        self.assertContains(response, "data-fleet-stream-select")
-        self.assertContains(response, "Phone / device live camera")
-        self.assertContains(response, "Start phone camera live")
-        self.assertContains(response, "fleet-live-indicator")
-        self.assertContains(response, "Available camera")
-        self.assertContains(response, 'class="fleet-camera-source"')
-        self.assertContains(response, 'class="fleet-camera-flip"')
-        self.assertContains(response, "Send captured clip")
-        self.assertContains(response, 'data-fleet-capture', html=False)
+        device = response.json()["devices"][0]
+        self.assertEqual(device["name"], "Cavite Survey Cam 01")
+        self.assertTrue(device["hasStream"])
+        self.assertEqual(device["streamUrl"], self.device.stream_url)
 
     def test_admin_can_register_a_fleet_camera(self):
         response = self.client.post(
@@ -218,13 +211,13 @@ class FleetCameraAnalyzerTests(TestCase):
             created_by=self.admin,
         )
 
-        response = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
+        response = self.client.get(f"/api/analyzer/?analysis={analysis.pk}")
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Stop live detection")
-        self.assertContains(response, 'data-continuous="true"')
-        self.assertContains(response, "LIVE DETECTION")
-        self.assertContains(response, f"/_authenticated/admin/video-analyzer/{analysis.pk}/status/")
+        selected = response.json()["selected"]
+        self.assertTrue(selected["isContinuous"])
+        self.assertEqual(selected["status"], VideoVisualizerStatus.RUNNING)
+        self.assertEqual(selected["sourceType"], VideoSourceType.LIVE_STREAM)
 
     @patch("console.views.read_uploaded_video")
     def test_live_captured_clip_is_queued_in_video_analyzer(self, metadata_reader):

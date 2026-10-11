@@ -5,9 +5,10 @@ container runs Gunicorn and the durable video-analysis worker together. It
 connects to a separate Coolify MariaDB resource and stores uploaded and
 processed media in a private S3-compatible bucket.
 
-The repository-level `nixpacks.toml` selects Python 3.12, installs FFmpeg, and
-uses `deploy/start-nixpacks.sh` as the start process. Do not add MySQL compiler
-packages: RoadVision uses the pure-Python PyMySQL compatibility driver.
+The repository-level `nixpacks.toml` selects Python 3.12 and Node.js 22,
+installs Python and npm dependencies, builds the React SPA, installs FFmpeg,
+and uses `deploy/start-nixpacks.sh` as the start process. Do not add MySQL
+compiler packages: RoadVision uses the pure-Python PyMySQL compatibility driver.
 
 ## 1. Create MariaDB
 
@@ -28,6 +29,7 @@ Build Pack: Nixpacks
 Base Directory: /
 Port Exposes: 8000
 Health Check Path: /livez/
+Is it a static site?: No
 ```
 
 The health check must use `/livez/`, not `/`. RoadVision permits loopback
@@ -98,12 +100,15 @@ Assign the normal HTTPS domain to the application. Coolify routes it to the
 exposed application port 8000. Deploy with the build cache cleared once after
 switching from the old native MySQL dependency.
 
-Startup performs:
+The Python and Node providers install from `requirements.txt` and
+`package-lock.json`; initialize the `frontend/` Git submodule in the source
+checkout before the image build runs `npm run build`. Startup verifies
+that the compiled React assets exist, then performs:
 
 1. Django deployment checks
 2. database migrations
 3. database-cache table creation
-4. static-file collection
+4. React static-file collection
 5. analysis-worker startup
 6. Gunicorn startup on port 8000
 
@@ -138,6 +143,8 @@ Then verify:
 
 - `/livez/` returns HTTP 200;
 - `/healthz/` returns HTTP 200 and confirms database access;
+- a nested SPA route such as `/app/analyzer` loads directly after a hard refresh;
+- `/api/session/` returns JSON and sets the CSRF cookie used by React;
 - login works and default/development accounts are disabled;
 - a short video can be uploaded, queued, processed, and viewed;
 - application logs show the analysis worker claiming and completing the job;

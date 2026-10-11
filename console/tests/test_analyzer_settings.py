@@ -95,31 +95,14 @@ class AnalyzerSettingsTests(TestCase):
         )
 
     def test_settings_are_not_rendered_on_analyzer_upload(self):
-        analyzer = self.client.get("/_authenticated/admin/video-analyzer/")
-        settings_page = self.client.get("/_authenticated/admin/settings/")
-        self.assertContains(analyzer, "Upload and Analyze")
-        self.assertContains(analyzer, 'id="open-upload-modal"')
-        self.assertContains(analyzer, 'id="upload-analysis-modal"')
-        self.assertContains(analyzer, 'id="visualizer-upload-form"')
-        self.assertContains(analyzer, 'id="processing-modal"')
-        self.assertContains(analyzer, 'id="processing-percent-complete"')
-        self.assertContains(analyzer, 'id="processing-percent-remaining"')
-        self.assertContains(analyzer, 'role="progressbar"')
-        self.assertContains(analyzer, 'id="analysis-ready-notification"')
-        self.assertContains(analyzer, 'id="webcam-flip"')
-        self.assertContains(analyzer, 'id="open-live-camera"')
-        self.assertContains(analyzer, 'id="webcam-live-detect"')
-        self.assertContains(analyzer, 'id="webcam-live-overlay"')
-        self.assertContains(
-            analyzer,
-            'data-live-detection-url="/_authenticated/admin/video-analyzer/live-frame/"',
-        )
-        self.assertNotContains(analyzer, "Model and Analysis Settings")
-        self.assertNotContains(analyzer, "Confidence threshold")
-        self.assertContains(settings_page, "Model and Analysis Settings")
-        self.assertContains(settings_page, "Confidence threshold")
-        self.assertContains(settings_page, "Default training architecture")
-        self.assertContains(settings_page, "YOLO26s segmentation")
+        analyzer = self.client.get("/api/analyzer/").json()
+        settings_page = self.client.get("/api/settings/").json()
+
+        self.assertIn("liveDetectionUrl", analyzer)
+        self.assertIn("configuration", analyzer)
+        self.assertNotIn("profile", analyzer)
+        self.assertEqual(settings_page["configuration"]["modelSession"], self.model.pk)
+        self.assertEqual(settings_page["configuration"]["confidenceThreshold"], 72)
 
     def test_recorded_analysis_reports_completed_and_remaining_percentages(self):
         analysis = VideoVisualizerAnalysis.objects.create(
@@ -298,10 +281,6 @@ class AnalyzerSettingsTests(TestCase):
             VideoPotholeTrack.objects.create(analysis=analysis, track_id=1, label="Pothole")
             source_name = analysis.video.name
 
-            page = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
-            self.assertContains(page, "Restart pothole analysis")
-            self.assertContains(page, 'class="inline-form restart-analysis-form"')
-
             with patch("console.views.ensure_analysis_worker") as starter:
                 response = self.client.post(
                     "/_authenticated/admin/video-analyzer/",
@@ -338,17 +317,18 @@ class AnalyzerSettingsTests(TestCase):
                 model_session=self.model,
                 created_by=self.user,
             )
-            response = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
+            response = self.client.get(f"/api/analyzer/?analysis={analysis.pk}")
             processed_url = f"/_authenticated/admin/video-analyzer/{analysis.pk}/media/processed/"
             original_url = f"/_authenticated/admin/video-analyzer/{analysis.pk}/media/original/"
-            self.assertContains(response, processed_url)
-            self.assertContains(response, original_url)
-            content = response.content.decode()
-            self.assertLess(content.index(processed_url), content.index(original_url))
-            self.assertContains(response, 'type="video/mp4"')
-            self.assertContains(response, 'id="viz-toggle-masks"')
-            self.assertContains(response, '<option value="0.1">0.1x</option>', html=True)
-            self.assertContains(response, '<option value="0.25">0.25x</option>', html=True)
+            media = response.json()["selected"]["media"]
+            self.assertEqual(media["processed"], processed_url)
+            self.assertEqual(media["original"], original_url)
+            self.assertEqual(media["processedType"], "video/mp4")
+            self.assertEqual(media["originalType"], "video/mp4")
+            self.assertEqual(
+                media["csv"],
+                f"/_authenticated/admin/video-visualizer/{analysis.pk}/report/",
+            )
 
     @override_settings(AUTO_START_ANALYSIS_WORKER=False)
     def test_original_video_uses_its_actual_browser_mime_type(self):
@@ -363,12 +343,10 @@ class AnalyzerSettingsTests(TestCase):
                 model_session=self.model,
                 created_by=self.user,
             )
-            response = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
-            self.assertContains(
-                response,
-                f"/_authenticated/admin/video-analyzer/{analysis.pk}/media/original/",
-            )
-            self.assertContains(response, 'type="video/quicktime"')
+            response = self.client.get(f"/api/analyzer/?analysis={analysis.pk}")
+            media = response.json()["selected"]["media"]
+            self.assertEqual(media["original"], f"/_authenticated/admin/video-analyzer/{analysis.pk}/media/original/")
+            self.assertEqual(media["originalType"], "video/quicktime")
 
     def test_review_video_endpoint_supports_browser_byte_ranges(self):
         with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
@@ -421,12 +399,6 @@ class AnalyzerSettingsTests(TestCase):
                 model_session=self.model,
                 created_by=self.user,
             )
-            analyzer = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
-            self.assertContains(analyzer, "visual-only estimated masks")
-            self.assertContains(analyzer, "Generate estimated masks")
-            report = self.client.get(f"/_authenticated/admin/video-visualizer/{analysis.pk}/report/")
-            self.assertContains(report, "box-derived visual estimates only")
-
             response = self.client.post(
                 "/_authenticated/admin/video-analyzer/",
                 {"action": "reanalyze_with_estimated_masks", "analysis_id": analysis.pk},
@@ -451,15 +423,11 @@ class AnalyzerSettingsTests(TestCase):
                 model_session=self.model,
                 created_by=self.user,
             )
-            response = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
-            self.assertContains(response, 'id="visualizer-video"')
-            self.assertContains(
-                response,
-                f"/_authenticated/admin/video-analyzer/{analysis.pk}/media/original/",
-            )
-            self.assertContains(response, "raw video preview is available")
-            self.assertContains(response, f'data-status-url="/_authenticated/admin/video-analyzer/{analysis.pk}/status/"')
-            self.assertContains(response, 'id="processing-modal"')
+            response = self.client.get(f"/api/analyzer/?analysis={analysis.pk}")
+            selected = response.json()["selected"]
+            self.assertEqual(selected["status"], VideoVisualizerStatus.QUEUED)
+            self.assertEqual(selected["media"]["original"], f"/_authenticated/admin/video-analyzer/{analysis.pk}/media/original/")
+            self.assertEqual(selected["progress"], 0)
 
     @override_settings(AUTO_START_ANALYSIS_WORKER=True)
     def test_queued_analyzer_recovers_worker_when_opened(self):
@@ -474,7 +442,7 @@ class AnalyzerSettingsTests(TestCase):
                 created_by=self.user,
             )
             with patch("console.views.start_analysis_worker") as starter:
-                response = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
+                response = self.client.get(f"/api/analyzer/?analysis={analysis.pk}")
             self.assertEqual(response.status_code, 200)
             starter.assert_called_once_with(analysis.pk)
 
@@ -498,11 +466,8 @@ class AnalyzerSettingsTests(TestCase):
                 model_session=self.model,
                 created_by=self.user,
             )
-            response = self.client.get("/_authenticated/admin/video-analyzer/")
-            self.assertContains(
-                response,
-                f"/_authenticated/admin/video-analyzer/{completed.pk}/media/original/",
-            )
+            response = self.client.get("/api/analyzer/")
+            self.assertEqual(response.json()["selected"]["id"], completed.pk)
 
     def test_detection_results_are_managed_in_defect_inventory(self):
         analysis = VideoVisualizerAnalysis.objects.create(
@@ -523,13 +488,11 @@ class AnalyzerSettingsTests(TestCase):
             appearance_count=4,
             severity="high",
         )
-        analyzer = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
-        inventory = self.client.get(f"/_authenticated/admin/detections/?analysis={analysis.pk}")
-        self.assertNotContains(analyzer, "<h2>Detection Results</h2>", html=True)
-        self.assertNotContains(analyzer, "<h2>Defect Inventory</h2>", html=True)
-        self.assertContains(analyzer, "Defect Inventory")
-        self.assertContains(inventory, f"A{analysis.pk}-P3")
-        self.assertContains(inventory, "inventory-road.mp4")
+        analyzer = self.client.get(f"/api/analyzer/?analysis={analysis.pk}").json()
+        inventory = self.client.get(f"/api/detections/?analysis={analysis.pk}").json()
+        self.assertEqual(analyzer["selected"]["tracks"][0]["code"], f"A{analysis.pk}-P3")
+        self.assertEqual(inventory["tracks"][0]["code"], f"A{analysis.pk}-P3")
+        self.assertEqual(inventory["analyses"][0]["name"], "inventory-road.mp4")
 
         response = self.client.post(
             "/_authenticated/admin/detections/",
@@ -581,9 +544,9 @@ class AnalyzerSettingsTests(TestCase):
             record = DatasetImage.objects.get(source_group=f"video-analysis-{analysis.pk}")
             editor_url = f"/_authenticated/admin/training-dataset/?tab=annotate&image={record.pk}"
             self.assertRedirects(response, editor_url, fetch_redirect_response=False)
-            editor = self.client.get(editor_url)
-            self.assertContains(editor, "Draw mask")
-            self.assertContains(editor, "Save masks to dataset")
+            dataset = self.client.get("/api/dataset/").json()
+            serialized = next(item for item in dataset["images"] if item["id"] == record.pk)
+            self.assertEqual(serialized["annotations"][0]["points"], track.best_segmentation_points)
 
     def test_keyframe_timeline_uses_best_frame_and_live_review_status(self):
         analysis = VideoVisualizerAnalysis.objects.create(
@@ -607,11 +570,11 @@ class AnalyzerSettingsTests(TestCase):
             highest_confidence=0.9,
             lowest_confidence=0.7,
         )
-        response = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
-        self.assertContains(response, 'id="video-timeline-scrubber"')
-        self.assertContains(response, 'class="video-marker confirmed road_damage"')
-        self.assertContains(response, 'style="--marker-percent: 50.0%;"')
-        self.assertContains(response, "arrow keys move between keyframes")
+        response = self.client.get(f"/api/analyzer/?analysis={analysis.pk}")
+        marker = response.json()["selected"]["timeline"][0]
+        self.assertEqual(marker["status"], VideoTrackReviewStatus.CONFIRMED)
+        self.assertEqual(marker["label"], "road_damage")
+        self.assertEqual(marker["percent"], 50.0)
 
     def test_pothole_snapshot_thumbnail_opens_full_detection_frame(self):
         with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
@@ -631,13 +594,10 @@ class AnalyzerSettingsTests(TestCase):
                 snapshot_frame=SimpleUploadedFile("p7-frame.jpg", b"frame", content_type="image/jpeg"),
             )
 
-            response = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
-
-            self.assertContains(response, 'class="snapshot-preview-link"')
-            self.assertContains(response, f'href="{track.snapshot_frame.url}"')
-            self.assertContains(response, f'src="{track.snapshot_crop.url}"')
-            self.assertContains(response, 'aria-label="View pothole P7 in full size"')
-            self.assertContains(response, "View pothole")
+            response = self.client.get(f"/api/analyzer/?analysis={analysis.pk}")
+            payload = response.json()["selected"]["tracks"][0]
+            self.assertEqual(payload["snapshotFrameUrl"], track.snapshot_frame.url)
+            self.assertEqual(payload["snapshotCropUrl"], track.snapshot_crop.url)
 
     def test_analysis_summary_uses_compact_defect_composition_chart(self):
         analysis = VideoVisualizerAnalysis.objects.create(
@@ -657,11 +617,9 @@ class AnalyzerSettingsTests(TestCase):
             label="Road damage",
         )
 
-        response = self.client.get(f"/_authenticated/admin/video-analyzer/?analysis={analysis.pk}")
-
-        self.assertContains(response, 'class="analysis-summary-panel"')
-        self.assertContains(response, 'aria-label="Defect composition: 10 potholes and 1 road damage tracks"')
-        self.assertContains(response, "11 total")
-        self.assertContains(response, "Total detections")
-        self.assertContains(response, "121")
-        self.assertNotContains(response, "video-stat-grid")
+        response = self.client.get(f"/api/analyzer/?analysis={analysis.pk}")
+        selected = response.json()["selected"]
+        self.assertEqual(selected["uniquePotholes"], 10)
+        self.assertEqual(selected["totalDetections"], 121)
+        self.assertEqual(len(selected["tracks"]), 1)
+        self.assertEqual(selected["tracks"][0]["label"], "Road damage")
