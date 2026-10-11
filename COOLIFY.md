@@ -10,6 +10,11 @@ installs Python and npm dependencies, builds the React SPA, installs FFmpeg,
 and uses `deploy/start-nixpacks.sh` as the start process. Do not add MySQL
 compiler packages: RoadVision uses the pure-Python PyMySQL compatibility driver.
 
+Python and Node setup phases pin the same Nixpkgs revision. Keep these pins
+aligned: Python exports its C++ runtime through `LD_LIBRARY_PATH`, and mixing
+an older Python package set with a newer Node/ICU package set can make `npm ci`
+fail with `CXXABI_1.3.15 not found` before the application image is built.
+
 ## 1. Create MariaDB
 
 Create a MariaDB 10.11 database resource in the same Coolify project and
@@ -99,6 +104,13 @@ those deleted files cannot restore the footage; upload and analyze it again.
 Assign the normal HTTPS domain to the application. Coolify routes it to the
 exposed application port 8000. Deploy with the build cache cleared once after
 switching from the old native MySQL dependency.
+
+After updating the Nixpkgs pins, redeploy the updated commit with the build
+cache cleared. In the generated Nixpacks plan, both `setup` and `node:setup`
+must show `e6f23dc08d3624daab7094b701aa3954923c6bbb` as `nixpkgsArchive`.
+The `build` phase must depend on both `install` and `node:install`.
+An initial `docker stop` message saying `No such container` is helper cleanup;
+the later build error determines why deployment failed.
 
 The Python and Node providers install from `requirements.txt` and
 `package-lock.json`; initialize the `frontend/` Git submodule in the source
