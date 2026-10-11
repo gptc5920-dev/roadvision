@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import os
@@ -6,7 +7,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.management import call_command, CommandError
-from django.test import TestCase, override_settings
+from django.test import Client, TestCase, override_settings
 
 from console.models import AppRole, UserRole
 
@@ -30,14 +31,34 @@ class SignInTests(TestCase):
         self.assertIn("error", response.json())
         self.assertEqual(get_user_model().objects.count(), before)
 
-    @override_settings(LOGIN_MAX_ATTEMPTS=2, LOGIN_LOCKOUT_SECONDS=60)
-    def test_repeated_bad_passwords_are_throttled(self):
-        payload = {"email": self.user.email, "password": "wrong"}
-        self.client.post("/api/auth/login/", payload, REMOTE_ADDR="192.0.2.1")
-        self.client.post("/api/auth/login/", payload, REMOTE_ADDR="192.0.2.1")
-        response = self.client.post("/api/auth/login/", payload, REMOTE_ADDR="192.0.2.1")
-        self.assertEqual(response.status_code, 429)
-        self.assertIn("Too many sign-in attempts", response.json()["error"])
+    def test_repeated_failures_do_not_block_correct_credentials(self):
+        for path, success_status in [("/api/auth/login/", 200), ("/auth/", 302)]:
+            with self.subTest(path=path):
+                browser = Client()
+                for _ in range(7):
+                    response = browser.post(path, {
+                        "email": self.user.email, "password": "wrong",
+                    }, REMOTE_ADDR="192.0.2.1")
+                    self.assertEqual(response.status_code, 400)
+                response = browser.post(path, {
+                    "email": self.user.email, "password": "correct-password",
+                }, REMOTE_ADDR="192.0.2.1")
+                self.assertEqual(response.status_code, success_status)
+                self.assertEqual(int(browser.session["_auth_user_id"]), self.user.pk)
+
+    def test_existing_cached_lockout_does_not_block_sign_in(self):
+        old_key = "login:" + hashlib.sha256(
+            f"192.0.2.1:{self.user.email}".encode()
+        ).hexdigest()
+        cache.set(old_key, 100, timeout=300)
+        for path, success_status in [("/api/auth/login/", 200), ("/auth/", 302)]:
+            with self.subTest(path=path):
+                browser = Client()
+                response = browser.post(path, {
+                    "email": self.user.email, "password": "correct-password",
+                }, REMOTE_ADDR="192.0.2.1")
+                self.assertEqual(response.status_code, success_status)
+                self.assertEqual(int(browser.session["_auth_user_id"]), self.user.pk)
 
     def test_valid_sign_in_redirects_to_analyzer(self):
         response = self.client.post(

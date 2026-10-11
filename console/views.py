@@ -219,22 +219,11 @@ def auth_page(request):
     if request.user.is_authenticated and is_staff_role(request.user):
         return redirect("admin_video_analyzer")
 
-    email = request.POST.get("email", "").strip().lower()
-    remote_address = request.META.get("REMOTE_ADDR", "unknown")
-    throttle_key = "login:" + hashlib.sha256(f"{remote_address}:{email}".encode()).hexdigest()
-    attempts = cache.get(throttle_key, 0)
-    locked = request.method == "POST" and attempts >= settings.LOGIN_MAX_ATTEMPTS
     form = SignInForm(request.POST or None)
 
-    if locked:
-        form.is_valid()
-        form.add_error(None, "Too many sign-in attempts. Try again in a few minutes.")
-    elif request.method == "POST" and form.is_valid():
-        cache.delete(throttle_key)
+    if request.method == "POST" and form.is_valid():
         login(request, form.cleaned_data["user"])
         return redirect("admin_video_analyzer")
-    elif request.method == "POST":
-        cache.set(throttle_key, attempts + 1, settings.LOGIN_LOCKOUT_SECONDS)
 
     if request.method == "POST":
         return JsonResponse({"error": "; ".join(form.non_field_errors()) or "Invalid sign-in."}, status=400)

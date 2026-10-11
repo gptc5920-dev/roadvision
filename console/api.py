@@ -5,15 +5,12 @@ write boundary.  React owns all presentation and routing; Django owns sessions,
 permissions, validation, persistence, media, and long-running analysis jobs.
 """
 
-import hashlib
 import json
 from functools import wraps
 
-from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model, login, logout
 from django.contrib.messages import get_messages
-from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.db.models import Avg, Count, Q
 from django.http import Http404, JsonResponse
@@ -146,19 +143,12 @@ def login_api(request):
     if body_error:
         return JsonResponse({"error": body_error}, status=400)
     email = str(data.get("email", "")).strip().lower()
-    remote_address = request.META.get("REMOTE_ADDR", "unknown")
-    throttle_key = "login:" + hashlib.sha256(f"{remote_address}:{email}".encode()).hexdigest()
-    attempts = cache.get(throttle_key, 0)
-    if attempts >= settings.LOGIN_MAX_ATTEMPTS:
-        return JsonResponse({"error": "Too many sign-in attempts. Try again in a few minutes."}, status=429)
 
     form = SignInForm({"email": email, "password": data.get("password", "")})
     if not form.is_valid():
-        cache.set(throttle_key, attempts + 1, settings.LOGIN_LOCKOUT_SECONDS)
         error = form.non_field_errors()[0] if form.non_field_errors() else "Invalid email or password."
         return JsonResponse({"error": str(error)}, status=400)
 
-    cache.delete(throttle_key)
     login(request, form.cleaned_data["user"])
     return JsonResponse({"ok": True, "redirect": "/app/analyzer", "csrfToken": get_token(request)})
 

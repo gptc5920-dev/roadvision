@@ -356,20 +356,6 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = int(
 # ROADVISION SETTINGS
 # =============================================================================
 
-LOGIN_MAX_ATTEMPTS = int(
-    os.environ.get(
-        "LOGIN_MAX_ATTEMPTS",
-        "5",
-    )
-)
-
-LOGIN_LOCKOUT_SECONDS = int(
-    os.environ.get(
-        "LOGIN_LOCKOUT_SECONDS",
-        "300",
-    )
-)
-
 ALLOW_PRIVATE_STREAMS = env_bool(
     "ALLOW_PRIVATE_STREAMS",
     False,
