@@ -1415,12 +1415,12 @@ def run_optional_detection(test):
         test.save(update_fields=["status"])
         return "Detection failed: the uploaded image could not be decoded."
     if result.boxes is not None:
-        if result.masks is None and is_segmentation:
+        xywhn = result.boxes.xywhn.cpu().tolist()
+        xyxy = result.boxes.xyxy.cpu().tolist()
+        if xyxy and result.masks is None and is_segmentation:
             test.status = "failed"
             test.save(update_fields=["status"])
             return "Detection failed: the segmentation model returned boxes without masks."
-        xywhn = result.boxes.xywhn.cpu().tolist()
-        xyxy = result.boxes.xyxy.cpu().tolist()
         confidences = result.boxes.conf.cpu().tolist()
         class_ids = result.boxes.cls.int().cpu().tolist()
         mask_polygons = result.masks.xyn if result.masks is not None else []

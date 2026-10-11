@@ -126,6 +126,11 @@ dataset use. `DETECTION_MASK_MAX_SIZE=192` bounds refinement work per box and
 can be tuned from 64 to 512 to trade throughput for contour detail. Segmentation models provide the authoritative magenta masks and
 automatically unlock mask-derived features.
 
+The Nixpacks deployment enables estimated detection masks by default. Set
+`DETECTION_MASK_REFINEMENT=false` explicitly for boxes only. The Analyzer track
+previews display saved polygons on their original full-frame snapshots, and
+live-frame responses identify each polygon as `model`, `estimated`, or `none`.
+
 Each queued training session freezes image IDs, source groups, image hashes,
 label text, and label hashes, so later review changes cannot silently alter the experiment. Training is
 deterministic by seed, supports pothole-oriented conservative/balanced/aggressive

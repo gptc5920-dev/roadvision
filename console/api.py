@@ -202,6 +202,11 @@ def _device(device):
 
 
 def _track(track):
+    polygon = track.best_segmentation_points or []
+    session = track.analysis.model_session
+    mask_source = (
+        "model" if session and session.model_task == "segment" else "estimated"
+    ) if len(polygon) >= 3 else "none"
     return {
         "id": track.pk,
         "analysisId": track.analysis_id,
@@ -227,6 +232,8 @@ def _track(track):
         "remarks": track.remarks,
         "snapshotCropUrl": _file_url(track.snapshot_crop),
         "snapshotFrameUrl": _file_url(track.snapshot_frame),
+        "segmentationPoints": polygon,
+        "maskSource": mask_source,
     }
 
 
@@ -378,7 +385,7 @@ def fleet_api(request):
 @require_GET
 def detections_api(request):
     tracks = (
-        VideoPotholeTrack.objects.select_related("analysis")
+        VideoPotholeTrack.objects.select_related("analysis__model_session")
         .filter(analysis__status=VideoVisualizerStatus.COMPLETE)
         .order_by("-analysis__created_at", "track_id")
     )

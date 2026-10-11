@@ -7,6 +7,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .readiness import model_readiness
 from .storage_paths import resolve_model_artifact
+from .segmentation import estimate_detection_mask, normalized_polygon
 
 
 class LiveDetectionError(RuntimeError):
@@ -121,9 +122,17 @@ def detect_live_frame(frame_bytes, configuration, confidence_threshold):
     detections = []
     if result.boxes is not None:
         boxes = result.boxes.xyxyn.cpu().tolist()
+        if boxes and model_task == "segment" and result.masks is None:
+            raise LiveDetectionError("The segmentation model returned detections without instance masks.")
         confidences = result.boxes.conf.cpu().tolist()
         class_ids = result.boxes.cls.int().cpu().tolist()
         polygons = result.masks.xyn if result.masks is not None else []
+        refinement_frame = None
+        if boxes and model_task == "detect" and settings.DETECTION_MASK_REFINEMENT:
+            import cv2
+            import numpy as np
+
+            refinement_frame = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
         for index, (box, confidence, class_id) in enumerate(zip(boxes, confidences, class_ids)):
             raw_label = str(result.names.get(class_id, class_id))
             normalized_label = raw_label.strip().lower().replace("-", "_").replace(" ", "_")
@@ -138,12 +147,23 @@ def detect_live_frame(frame_bytes, configuration, confidence_threshold):
                 if index < len(polygons) and len(polygons[index]) >= 3
                 else []
             )
+            if not polygon and refinement_frame is not None:
+                points = estimate_detection_mask(
+                    refinement_frame,
+                    (x1 * image.width, y1 * image.height, x2 * image.width, y2 * image.height),
+                    cv2,
+                    settings.DETECTION_MASK_MAX_SIZE,
+                )
+                polygon = normalized_polygon(points, image.width, image.height)
+            if not polygon and model_task == "segment":
+                continue
             detections.append(
                 {
                     "label": normalized_label,
                     "confidence": round(float(confidence), 4),
                     "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
                     "segmentation_points": polygon,
+                    "mask_source": ("model" if model_task == "segment" else "estimated") if polygon else "none",
                 }
             )
 

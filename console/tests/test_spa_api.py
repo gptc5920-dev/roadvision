@@ -18,10 +18,32 @@ from console.models import (
     VideoPotholeTrack,
     VideoVisualizerAnalysis,
     VideoVisualizerStatus,
+    TrainingSession,
 )
 
 
 class ReactSpaApiTests(TestCase):
+    def test_track_api_exposes_saved_mask_coordinates_and_provenance(self):
+        self.client.force_login(self.user)
+        for task, source in [("detect", "estimated"), ("segment", "model")]:
+            session = TrainingSession.objects.create(model_task=task)
+            analysis = VideoVisualizerAnalysis.objects.create(
+                original_filename="masked.mp4", file_hash="a"*64, file_type="mp4",
+                status=VideoVisualizerStatus.COMPLETE, model_session=session,
+            )
+            polygon = [[.2, .2], [.4, .2], [.3, .4]]
+            track = VideoPotholeTrack.objects.create(analysis=analysis, track_id=1, best_segmentation_points=polygon)
+            response = self.client.get(f"/api/analyzer/?analysis={analysis.pk}")
+            self.assertEqual(response.status_code, 200)
+            serialized = response.json()["selected"]["tracks"][0]
+            self.assertEqual(serialized["segmentationPoints"], polygon)
+            self.assertEqual(serialized["maskSource"], source)
+            inventory = self.client.get(f"/api/detections/?analysis={analysis.pk}")
+            self.assertEqual(inventory.json()["tracks"][0]["maskSource"], source)
+            track.best_segmentation_points = []
+            track.save(update_fields=["best_segmentation_points"])
+            self.assertEqual(self.client.get(f"/api/detections/?analysis={analysis.pk}").json()["tracks"][0]["maskSource"], "none")
+
     def setUp(self):
         self.user = get_user_model().objects.create_user(
             username="spa-admin@example.com",

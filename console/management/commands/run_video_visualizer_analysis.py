@@ -565,7 +565,7 @@ class Command(BaseCommand):
                         if use_ultralytics_tracker and results.boxes.id is not None
                         else [None] * len(xyxy)
                     )
-                    if results.masks is None and not detection_mode:
+                    if xyxy and results.masks is None and not detection_mode:
                         raise CommandError("Segmentation model returned detections without instance masks.")
                     mask_polygons = results.masks.xy if results.masks is not None else []
                     for index, (raw_box, confidence, tracked_id, class_id) in enumerate(zip(xyxy, confidences, tracked_ids, class_ids)):
