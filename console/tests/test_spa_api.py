@@ -1,6 +1,3 @@
-import re
-
-from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import Client, TestCase
@@ -52,15 +49,16 @@ class ReactSpaApiTests(TestCase):
         )
         UserRole.objects.update_or_create(user=self.user, defaults={"role": AppRole.ADMIN})
 
-    def test_public_and_nested_spa_routes_use_single_shell(self):
-        for path in ["/", "/login", "/app/dashboard", "/app/analyzer", "/app/dataset?tab=annotate"]:
+    def test_backend_root_is_json_and_does_not_serve_react(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["application"], "RoadVision API")
+
+    def test_frontend_routes_and_unknown_apis_are_not_served_by_django(self):
+        for path in ["/login", "/app/dashboard", "/app/analyzer", "/app/dataset?tab=annotate", "/api/missing/"]:
             response = self.client.get(path)
-            self.assertEqual(response.status_code, 200, path)
-            self.assertContains(response, 'id="root"')
-            self.assertRegex(response.content.decode(), r'/static/console/react/assets/index-[^" ]+\.js')
-            self.assertEqual(response["Cache-Control"], "no-cache")
-            for asset in re.findall(r'/static/console/react/assets/[^" ]+', response.content.decode()):
-                self.assertTrue((settings.BASE_DIR / asset.lstrip("/")).is_file(), asset)
+            self.assertEqual(response.status_code, 404, path)
+            self.assertIn("error", response.json())
 
     def test_session_and_login_are_json(self):
         anonymous = self.client.get("/api/session/")

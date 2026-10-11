@@ -14,11 +14,20 @@ AUTO_REGISTER_BUNDLED_MODEL = "true"
 # libstdc++ than Node/ICU requires (CXXABI_1.3.15).
 nixpkgsArchive = "e6f23dc08d3624daab7094b701aa3954923c6bbb"
 # PyMySQL does not need the provider's auto-detected native MySQL headers.
-nixPkgs = ["python312", "gcc"]
+nixPkgs = ["python312", "gcc", "caddy"]
 aptPkgs = ["...", "curl", "wget", "ffmpeg", "libglib2.0-0"]
 
 [phases."node:setup"]
 nixpkgsArchive = "e6f23dc08d3624daab7094b701aa3954923c6bbb"
+
+# Use the repository Caddyfile rather than the Node provider's static-site plan.
+[phases."node:caddy"]
+nixPkgs = []
+cmds = []
+
+# The shared build phase builds React once after both dependency installations.
+[phases."node:build"]
+cmds = []
 
 [phases.build]
 dependsOn = ["install", "node:install"]

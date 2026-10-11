@@ -40,11 +40,9 @@ class SignInTests(TestCase):
         self.assertEqual(response.json()["redirect"], "/app/analyzer")
         self.assertEqual(int(self.client.session["_auth_user_id"]), self.user.pk)
 
-    def test_sign_in_page_offers_password_visibility_toggle(self):
+    def test_sign_in_page_is_owned_by_frontend_server(self):
         response = self.client.get("/login")
-
-        self.assertContains(response, 'id="root"')
-        self.assertRegex(response.content.decode(), r'/static/console/react/assets/index-[^" ]+\.js')
+        self.assertEqual(response.status_code, 404)
 
     def test_health_endpoint(self):
         response = self.client.get("/healthz/")
@@ -67,14 +65,11 @@ class SignInTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "alive"})
 
-    def test_authenticated_console_includes_responsive_navigation_shell(self):
+    def test_authenticated_console_is_owned_by_frontend_server(self):
         self.user.console_role.role = "engineer"
         self.user.console_role.save(update_fields=["role"])
         self.client.force_login(self.user)
 
         response = self.client.get("/app/analyzer")
 
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'id="root"')
-        self.assertRegex(response.content.decode(), r'/static/console/react/assets/index-[^" ]+\.css')
-        self.assertRegex(response.content.decode(), r'/static/console/react/assets/index-[^" ]+\.js')
+        self.assertEqual(response.status_code, 404)

@@ -5,7 +5,7 @@ from . import api, views
 
 
 urlpatterns = [
-    path("", views.landing, name="home"),
+    path("", views.api_index, name="home"),
     path("healthz/", views.health, name="health"),
     path("livez/", views.liveness, name="liveness"),
     path("api/session/", api.session_api, name="api_session"),
@@ -23,9 +23,6 @@ urlpatterns = [
     path("api/actions/analyzer/", api.analyzer_action_api, name="api_analyzer_action"),
     path("api/actions/dataset/", api.dataset_action_api, name="api_dataset_action"),
     path("api/actions/modules/<slug:module>/", api.module_action_api, name="api_module_action"),
-    path("login", views.spa_shell, name="spa_login"),
-    path("app", views.spa_shell, name="spa_app"),
-    path("app/<path:unused>", views.spa_shell, name="spa_route"),
     path("auth/", views.auth_page, name="auth"),
     path("logout/", views.sign_out, name="logout"),
     path("_authenticated/", views.authenticated_index, name="authenticated_index"),
@@ -60,5 +57,5 @@ urlpatterns = [
     path("_authenticated/admin/detection-sources/", views.module_placeholder, {"module": "detection-sources"}, name="admin_detection_sources"),
     path("_authenticated/admin/personnel/", views.module_placeholder, {"module": "personnel"}, name="admin_personnel"),
     path("_authenticated/admin/settings/", views.module_placeholder, {"module": "settings"}, name="admin_settings"),
-    path("<path:unused>/", views.not_found_redirect, name="not_found_redirect"),
+    path("<path:unused>", views.not_found, name="not_found"),
 ]

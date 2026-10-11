@@ -195,18 +195,8 @@ def video_analysis_progress(analysis):
     return completed, 100 - completed
 
 
-def landing(request):
-    return spa_shell(request)
-
-
-def spa_shell(request, unused=""):
-    """Serve Vite's built HTML for client-side routes."""
-    index = settings.STATIC_DIRECTORY / "console" / "react" / "index.html"
-    if not index.is_file():
-        return HttpResponse("Frontend build is missing. Run npm run build.", status=503)
-    response = HttpResponse(index.read_bytes(), content_type="text/html; charset=utf-8")
-    response["Cache-Control"] = "no-cache"
-    return response
+def api_index(request):
+    return JsonResponse({"application": "RoadVision API", "session": "/api/session/"})
 
 
 def health(request):
@@ -261,8 +251,8 @@ def authenticated_index(request):
     return redirect("/app/analyzer")
 
 
-def not_found_redirect(request, unused):
-    return spa_shell(request, unused)
+def not_found(request, unused):
+    return JsonResponse({"error": "The requested endpoint was not found."}, status=404)
 
 
 def staff_required(view_func):

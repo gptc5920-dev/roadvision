@@ -1,9 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig(({ command }) => ({
+export default defineConfig({
   root: "frontend",
-  base: command === "build" ? "/static/console/react/" : "/",
+  base: "/",
   plugins: [react()],
   server: {
     port: 5173,
@@ -17,8 +17,8 @@ export default defineConfig(({ command }) => ({
     environment: "node",
   },
   build: {
-    outDir: "../static/console/react",
+    outDir: "dist",
     emptyOutDir: true,
     sourcemap: false,
   },
-}));
+});

@@ -1,12 +1,13 @@
 # Deploy RoadVision with Coolify Nixpacks
 
 RoadVision is prepared as one Git-based Nixpacks application. The application
-container runs Gunicorn and the durable video-analysis worker together. It
+container runs a separate Caddy frontend server, Gunicorn API server, and
+the durable video-analysis worker together. It
 connects to a separate Coolify MariaDB resource and stores uploaded and
 processed media in a private S3-compatible bucket.
 
 The repository-level `nixpacks.toml` selects Python 3.12 and Node.js 22,
-installs Python and npm dependencies, builds the React SPA, installs FFmpeg,
+installs Python and npm dependencies, builds the React SPA, installs Caddy and FFmpeg,
 and uses `deploy/start-nixpacks.sh` as the start process. Do not add MySQL
 compiler packages: RoadVision uses the pure-Python PyMySQL compatibility driver.
 
@@ -33,6 +34,7 @@ Create or edit the Git-based application for `gptc5920-dev/roadvision`:
 Build Pack: Nixpacks
 Base Directory: /
 Port Exposes: 8000
+Health Check Port: 8000
 Health Check Path: /livez/
 Is it a static site?: No
 ```
@@ -40,6 +42,13 @@ Is it a static site?: No
 The health check must use `/livez/`, not `/`. RoadVision permits loopback
 hostnames for Coolify's internal probe and exempts only the health endpoints
 from the production HTTPS redirect.
+
+Caddy listens on `PORT` (8000 by default) and serves `frontend/dist/` using
+`deploy/Caddyfile`. It forwards `/api/*`, protected download routes, health
+checks, and the native Django admin to Gunicorn at `127.0.0.1:8001`. All page
+routes are served by React. Keep `PORT` and Coolify's exposed/health-check ports
+equal. Remove any old `GUNICORN_BIND` override; startup fixes Django's internal
+bind to port 8001 so it cannot conflict with the frontend server.
 
 On startup, RoadVision verifies the bundled model artifact against its pinned
 SHA-256 digest and idempotently registers it as the active standard detection
@@ -66,6 +75,7 @@ Variables page. At minimum, replace every placeholder in:
 
 ```dotenv
 ROADVISION_ENV=production
+PORT=8000
 DJANGO_DEBUG=false
 DJANGO_SECRET_KEY=replace-with-at-least-50-random-characters
 DJANGO_ALLOWED_HOSTS=roadvision.example.gov.ph
@@ -80,6 +90,13 @@ AWS_S3_REGION_NAME=ap-southeast-1
 AWS_ACCESS_KEY_ID=replace-with-restricted-access-key
 AWS_SECRET_ACCESS_KEY=replace-with-restricted-secret-key
 ```
+
+Use your actual browser domain in both Django variables, even though Caddy
+serves the frontend. For `https://api.roadsense.site`, use
+`DJANGO_ALLOWED_HOSTS=api.roadsense.site` and
+`DJANGO_CSRF_TRUSTED_ORIGINS=https://api.roadsense.site`. These variables must
+be available at runtime. Caddy preserves the original host and trusts HTTPS
+forwarding headers from the private Coolify proxy network.
 
 Use a restricted application database account, not MariaDB `root`. Keep the
 media bucket private. Django creates short-lived signed URLs for authorized
@@ -120,9 +137,13 @@ that the compiled React assets exist, then performs:
 1. Django deployment checks
 2. database migrations
 3. database-cache table creation
-4. React static-file collection
+4. Django admin static-file collection
 5. analysis-worker startup
-6. Gunicorn startup on port 8000
+6. Gunicorn API startup on internal port 8001
+7. Caddy frontend startup on public port 8000
+
+Startup supervises all three processes. If any process exits, it shuts down
+the others and exits so Coolify can restart the application.
 
 Keep the application at one replica. The web server and inference worker share
 the same CPU and memory allocation in this Nixpacks layout.

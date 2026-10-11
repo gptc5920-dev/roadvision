@@ -7,7 +7,7 @@ RoadVision is a Django application for authenticated pothole-video analysis, eng
 1. Start MariaDB 10.5 or newer. The old XAMPP MariaDB 10.4 line is development-only legacy data and is not supported by Django 5.2.
 2. Install dependencies: `python -m pip install -r requirements.txt`
 3. Apply schema changes: `python manage.py migrate`
-4. Start the site: `python manage.py runserver`
+4. Start the API: `python manage.py runserver`, then the React UI: `npm run dev`
 5. Start a durable analysis worker in another terminal:
 
    `python manage.py run_video_visualizer_analysis --watch`
@@ -27,14 +27,16 @@ The `frontend/` source is a Git submodule. Initialize it after cloning with
 `git submodule update --init --recursive` (or clone with `--recurse-submodules`).
 
 - Install frontend dependencies: `npm install`
-- Build the Django static assets: `npm run build`
-- The production bundle and HTML shell are written to `static/console/react/`.
-  Django serves that built HTML for frontend routes and WhiteNoise serves its
-  fingerprinted assets under `/static/console/react/`.
+- Build the React frontend: `npm run build`
+- The production bundle and HTML shell are written to `frontend/dist/`.
+  A separate Caddy process serves those files and all React routes. Django
+  serves the API and protected downloads; it does not render the frontend.
 
 Run `npm run build` after changing anything in `frontend/src/`. Coolify installs
-from `package-lock.json` and builds the bundle before Django collects static
-files.
+from `package-lock.json` and builds the bundle. One Coolify application runs
+Caddy on the public port (`PORT=8000`), Django on `127.0.0.1:8001`, and the
+analysis worker. Caddy proxies backend routes to Django, so React's existing
+relative API URLs and session/CSRF cookies continue to work on one origin.
 
 For local full-stack development without MariaDB, use the isolated SQLite
 profile in two terminals:

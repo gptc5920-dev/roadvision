@@ -151,7 +151,7 @@ if ENVIRONMENT == "production":
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR / "templates"],
+        "DIRS": [],
         "APP_DIRS": ENVIRONMENT != "production",
         "OPTIONS": template_options,
     },
@@ -300,8 +300,7 @@ USE_TZ = True
 
 STATIC_URL = "/static/"
 
-STATIC_DIRECTORY = BASE_DIR / "static"
-STATICFILES_DIRS = [STATIC_DIRECTORY] if STATIC_DIRECTORY.exists() else []
+STATICFILES_DIRS = []
 STATIC_ROOT = Path(os.environ.get("STATIC_ROOT", BASE_DIR / "staticfiles"))
 
 MEDIA_URL = "/media/"
