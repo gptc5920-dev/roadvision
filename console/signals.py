@@ -16,5 +16,7 @@ def ensure_console_identity(sender, instance, created, raw=False, **kwargs):
         defaults={"full_name": full_name},
     )
 
-    role = AppRole.ADMIN if not UserRole.objects.filter(role=AppRole.ADMIN).exists() else AppRole.VIEWER
+    role = AppRole.ADMIN if (
+        instance.is_superuser or not UserRole.objects.filter(role=AppRole.ADMIN).exists()
+    ) else AppRole.VIEWER
     UserRole.objects.get_or_create(user=instance, defaults={"role": role})

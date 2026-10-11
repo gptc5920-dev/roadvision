@@ -36,7 +36,15 @@ class SignInForm(forms.Form):
         email = cleaned.get("email")
         password = cleaned.get("password")
         if email and password:
-            user = authenticate(username=email, password=password)
+            # Django's createsuperuser allows a username different from email.
+            # Reject ambiguous legacy emails rather than selecting an account.
+            matches = list(get_user_model().objects.filter(
+                Q(email__iexact=email) | Q(username__iexact=email)
+            ).values_list("username", flat=True)[:2])
+            username = matches[0] if len(matches) == 1 else email
+            user = authenticate(username=username, password=password)
+            if len(matches) > 1:
+                user = None
             if user is None:
                 raise forms.ValidationError("Invalid email or password.")
             cleaned["user"] = user

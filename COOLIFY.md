@@ -209,6 +209,24 @@ Then verify:
 
 ## 6. Operations
 
+Create the first administrator inside the **Django API application's runtime
+terminal**, not in the React container or build helper:
+
+```bash
+python manage.py migrate --settings=config.settings
+python manage.py createsuperuser --settings=config.settings
+python manage.py inspect_account YOUR_USERNAME_OR_EMAIL --settings=config.settings
+```
+
+Enter a real email address when creating the account; React signs in by email
+even when the Django username is different. Superusers always have console
+administrator access. Django stores credentials in `auth_user`, and links
+profile and application role records separately. `inspect_account` prints the
+connected database host/name and saved account flags without printing password
+hashes or database credentials. Use it to distinguish an absent record from a
+login/role problem. Production uses MariaDB; `config.settings_development`
+uses a separate local SQLite database and must not be used on the server.
+
 Enable automated MariaDB backups in Coolify and versioning/lifecycle protection
 for the object-storage bucket. Restore-test both before production use.
 

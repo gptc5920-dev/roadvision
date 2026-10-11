@@ -4,6 +4,8 @@ from .models import AppRole
 def user_role(user):
     if not user.is_authenticated:
         return None
+    if user.is_superuser:
+        return AppRole.ADMIN
     return getattr(getattr(user, "console_role", None), "role", AppRole.VIEWER)
 
 

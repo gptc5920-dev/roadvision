@@ -1,6 +1,14 @@
+import io
+import json
+import os
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.management import call_command, CommandError
 from django.test import TestCase, override_settings
+
+from console.models import AppRole, UserRole
 
 
 class SignInTests(TestCase):
@@ -43,6 +51,80 @@ class SignInTests(TestCase):
     def test_sign_in_page_is_owned_by_frontend_server(self):
         response = self.client.get("/login")
         self.assertEqual(response.status_code, 404)
+
+    def test_createsuperuser_persists_account_and_assigns_console_admin(self):
+        with patch.dict(os.environ, {"DJANGO_SUPERUSER_PASSWORD": "CLI-Admin-2026!"}):
+            call_command(
+                "createsuperuser", username="cli-admin", email="cli-admin@example.com",
+                interactive=False, stdout=io.StringIO(),
+            )
+        account = get_user_model().objects.get(username="cli-admin")
+        self.assertTrue(account.is_superuser)
+        self.assertTrue(account.check_password("CLI-Admin-2026!"))
+        self.assertEqual(account.console_role.role, AppRole.ADMIN)
+        response = self.client.post("/api/auth/login/", {
+            "email": account.email, "password": "CLI-Admin-2026!",
+        })
+        self.assertEqual(response.status_code, 200)
+        session = self.client.get("/api/session/").json()
+        self.assertTrue(session["user"]["isAdmin"])
+
+    def test_existing_superuser_with_viewer_role_keeps_admin_access(self):
+        account = get_user_model().objects.create_superuser(
+            username="legacy-admin", email="legacy-admin@example.com", password="Legacy-2026!",
+        )
+        UserRole.objects.filter(user=account).update(role=AppRole.VIEWER)
+        self.client.force_login(account)
+        self.assertTrue(self.client.get("/api/session/").json()["user"]["isAdmin"])
+        self.assertEqual(self.client.get("/api/personnel/").status_code, 200)
+
+    def test_email_login_matches_existing_username_case_insensitively(self):
+        response = self.client.post("/api/auth/login/", {
+            "email": self.user.email.upper(), "password": "correct-password",
+        })
+        self.assertEqual(response.status_code, 200)
+
+    def test_ambiguous_email_is_rejected(self):
+        get_user_model().objects.create_user(
+            username="another-engineer", email=self.user.email.upper(), password="other-password",
+        )
+        response = self.client.post("/api/auth/login/", {
+            "email": self.user.email, "password": "correct-password",
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_inactive_account_cannot_sign_in_by_email(self):
+        self.user.is_active = False
+        self.user.save(update_fields=["is_active"])
+        response = self.client.post("/api/auth/login/", {
+            "email": self.user.email, "password": "correct-password",
+        })
+        self.assertEqual(response.status_code, 400)
+
+    def test_regular_viewer_is_not_granted_superuser_access(self):
+        self.user.console_role.role = AppRole.VIEWER
+        self.user.console_role.save(update_fields=["role"])
+        self.client.force_login(self.user)
+        session = self.client.get("/api/session/").json()
+        self.assertFalse(session["user"]["isAdmin"])
+        self.assertEqual(self.client.get("/api/personnel/").status_code, 403)
+
+    def test_account_inspection_reports_saved_account_without_password(self):
+        output = io.StringIO()
+        call_command("inspect_account", self.user.email, stdout=output)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["database"]["userTable"], "auth_user")
+        self.assertEqual(report["accounts"][0]["id"], self.user.pk)
+        self.assertTrue(report["accounts"][0]["hasUsablePassword"])
+        self.assertNotIn(self.user.password, output.getvalue())
+        self.assertNotIn("correct-password", output.getvalue())
+
+    def test_account_inspection_identifies_missing_account(self):
+        output = io.StringIO()
+        with self.assertRaisesMessage(CommandError, "Account not found"):
+            call_command("inspect_account", "missing@example.com", stdout=output)
+        self.assertEqual(json.loads(output.getvalue())["accounts"], [])
 
     def test_health_endpoint(self):
         response = self.client.get("/healthz/")
