@@ -7,6 +7,7 @@ permissions, validation, persistence, media, and long-running analysis jobs.
 
 import json
 from functools import wraps
+from urllib.parse import urlsplit, parse_qs, urlencode
 
 from django.contrib import messages
 from django.contrib.auth import get_user_model, login, logout
@@ -260,7 +261,7 @@ def _analysis(analysis, include_tracks=False):
             "processedType": "video/mp4" if analysis.processed_video else "",
             "original": reverse("admin_video_visualizer_media", args=[analysis.pk, "original"]) if analysis.video else "",
             "originalType": views.VIDEO_MIME_TYPES.get((analysis.file_type or "").lower(), "application/octet-stream") if analysis.video else "",
-            "live": reverse("admin_video_visualizer_media", args=[analysis.pk, "live-preview"]) if analysis.live_preview_frame else "",
+            "live": (reverse("admin_video_visualizer_media", args=[analysis.pk, "live-preview"]) + f"?v={analysis.heartbeat_at.timestamp() if analysis.heartbeat_at else 0}") if analysis.live_preview_frame else "",
             "csv": reverse("admin_video_visualizer_report", args=[analysis.pk]),
         },
     }
@@ -331,14 +332,32 @@ def reports_api(request):
     if error:
         return error
     reports = PotholeReport.objects.all()
+    selected_report, error = _query_integer(request, "report", default=None)
+    if error:
+        return error
+    if selected_report is not None:
+        reports = reports.filter(pk=selected_report)
     counts = reports.aggregate(
         total=Count("id"),
         open=Count("id", filter=Q(status=ReportStatus.OPEN)),
         critical=Count("id", filter=Q(severity="critical")),
     )
     report_items = [_report(report) for report in reports[:limit]]
+    mapped_tracks = VideoPotholeTrack.objects.select_related("analysis").filter(
+        analysis__status__in=[VideoVisualizerStatus.COMPLETE, VideoVisualizerStatus.RUNNING],
+        latitude__isnull=False, longitude__isnull=False,
+    ).exclude(review_status=VideoTrackReviewStatus.REJECTED).order_by("-analysis__created_at", "track_id")
     return JsonResponse({
         "reports": report_items,
+        "detections": [
+            {"id": track.pk, "analysisId": track.analysis_id, "code": f"A{track.analysis_id}-P{track.track_id}",
+             "lat": _number(track.latitude), "lng": _number(track.longitude),
+             "severity": track.severity, "status": track.review_status,
+             "city": track.analysis.road_section or "Survey defect", "notes": track.remarks,
+             "deviceId": str((track.analysis.route_metadata or {}).get("fleet_device_id", "")),
+             "detectedAt": _date(track.analysis.created_at)}
+            for track in mapped_tracks[:limit]
+        ],
         "counts": counts,
         "pagination": {
             "limit": limit,
@@ -384,6 +403,11 @@ def detections_api(request):
         return error
     if analysis_id is not None:
         tracks = tracks.filter(analysis_id=analysis_id)
+    track_id, error = _query_integer(request, "track", default=None)
+    if error:
+        return error
+    if track_id is not None:
+        tracks = tracks.filter(pk=track_id)
     counts = tracks.aggregate(
         total=Count("id"),
         unresolved=Count("id", filter=Q(review_status=VideoTrackReviewStatus.UNRESOLVED)),
@@ -657,6 +681,27 @@ def _action_result(request, response):
     has_error_notice = any("error" in notice["level"].split() for notice in notices)
     ok = response.status_code < 400 and not has_error_notice
     payload = {"ok": ok, "messages": notices}
+    # Translate legacy write-handler redirects into SPA routes; never forward arbitrary URLs.
+    destination = urlsplit(response.get("Location", ""))
+    routes = {
+        "/api/actions/analyzer/": "/app/analyzer",
+        "/api/actions/modules/video-analyzer/": "/app/analyzer",
+        "/api/actions/dataset/": "/app/dataset",
+        "/api/actions/modules/fleet-cams/": "/app/fleet",
+        "/api/actions/modules/dispatch/": "/app/dispatch",
+        "/_authenticated/admin/video-analyzer/": "/app/analyzer",
+        "/_authenticated/admin/training-dataset/": "/app/dataset",
+        "/_authenticated/admin/fleet-cams/": "/app/fleet",
+        "/_authenticated/admin/live-map/": "/app/map",
+        "/_authenticated/admin/dispatch/": "/app/dispatch",
+        "/_authenticated/admin/detections/": "/app/detections",
+    }
+    if ok and not destination.scheme and not destination.netloc and destination.path in routes:
+        query = parse_qs(destination.query)
+        if query.get("tab") == ["train"]:
+            query["tab"] = ["training"]
+        suffix = urlencode(query, doseq=True)
+        payload["redirect"] = routes[destination.path] + (f"?{suffix}" if suffix else "")
     for key in ("error", "fields"):
         if key in response_payload:
             payload[key] = response_payload[key]
@@ -680,7 +725,7 @@ ANALYZER_ACTIONS = {
 }
 DATASET_ACTIONS = {
     "upload_images", "save_annotations", "move_source_group", "review_image", "archive_image",
-    "run_augmentation", "start_training", "test_detection", "add_detection_to_dataset",
+    "run_augmentation", "start_training", "retry_training", "test_detection", "add_detection_to_dataset",
 }
 MODULE_ACTIONS = {
     "overview": set(),
@@ -728,7 +773,7 @@ def _run_action(request, allowed_actions, handler):
         if not form.is_valid():
             return JsonResponse({"error": "Correct the highlighted fields.", "fields": form.errors}, status=400)
     # Device IDs are slugs; the other referenced primary keys are positive integers.
-    for name in ("image_id", "analysis_id", "track_id", "test_id", "sample_id", "user_id"):
+    for name in ("image_id", "analysis_id", "track_id", "test_id", "sample_id", "user_id", "session_id"):
         value = request.POST.get(name)
         if value is not None and (len(value) > 18 or not value.isascii() or not value.isdecimal() or int(value) < 1):
             return JsonResponse({"error": "Invalid record identifier.", "fields": {name: ["Enter a valid record ID."]}}, status=400)

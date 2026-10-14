@@ -305,6 +305,8 @@ STATIC_ROOT = Path(os.environ.get("STATIC_ROOT", BASE_DIR / "staticfiles"))
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", BASE_DIR / "media"))
+STREAM_OPEN_TIMEOUT_SECONDS = max(1, int(os.environ.get("STREAM_OPEN_TIMEOUT_SECONDS", "10")))
+STREAM_READ_TIMEOUT_SECONDS = max(1, int(os.environ.get("STREAM_READ_TIMEOUT_SECONDS", "20")))
 
 AWS_STORAGE_BUCKET_NAME = os.environ.get("AWS_STORAGE_BUCKET_NAME", "")
 STORAGES = {
@@ -530,6 +532,9 @@ AUTO_TRAIN_DEVICE = os.environ.get(
     "AUTO_TRAIN_DEVICE",
     "cpu",
 )
+
+# Batch callbacks renew the lease; a generous timeout also covers model downloads.
+TRAINING_LEASE_SECONDS = max(60, int(os.environ.get("TRAINING_LEASE_SECONDS", "3600")))
 
 AUTO_START_ANALYSIS_WORKER = env_bool(
     "AUTO_START_ANALYSIS_WORKER",

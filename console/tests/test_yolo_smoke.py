@@ -17,6 +17,7 @@ from django.test import TestCase, override_settings
 from console.management.commands.run_yolo_training import Command
 from console.models import DatasetImage, DatasetImageStatus, PotholeAnnotation, TrainingSession
 from console.readiness import training_dataset_manifest
+from console.storage_paths import resolve_model_artifact
 
 
 @skipUnless(os.environ.get("RUN_YOLO_SMOKE") == "1", "Set RUN_YOLO_SMOKE=1 for real CPU training")
@@ -79,8 +80,10 @@ class YoloCpuSmokeTests(TestCase):
             session.refresh_from_db()
             self.assertEqual(session.status, TrainingSession.Status.COMPLETE, session.error_message)
             self.assertTrue(evidence.get("changed"), "Training must update backbone weights")
-            self.assertTrue(Path(session.model_file).is_file())
+            self.assertTrue(resolve_model_artifact(session.model_file).is_file())
             self.assertEqual(session.model_task, "segment")
             self.assertEqual(session.local_test_images, 1)
             self.assertIsNotNone(session.local_map50)
             self.assertFalse(session.is_active_video_model)
+            self.assertEqual(session.worker_id, "")
+            self.assertIsNone(session.lease_expires_at)

@@ -23,6 +23,18 @@ from console.views import next_balanced_split, parse_annotation_payload, queue_a
 
 @override_settings(DATASET_MIN_TRAIN_IMAGES=1, DATASET_MIN_VAL_IMAGES=1, DATASET_MIN_TEST_IMAGES=1)
 class TrainingPipelineTests(TestCase):
+    def test_training_rejects_an_excessive_learning_rate_before_queueing(self):
+        before = TrainingSession.objects.count()
+        response = self.client.post("/api/actions/dataset/", {
+            "action": "start_training", "model_name": "yolo11n-seg", "epochs": 10,
+            "batch_size": 4, "image_size": 512, "learning_rate": "2", "device": "cpu",
+            "patience": 5, "workers": 0, "optimizer": "AdamW", "augmentation_profile": "balanced",
+            "seed": 42, "freeze_layers": 0,
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("learning_rate", response.json()["fields"])
+        self.assertEqual(TrainingSession.objects.count(), before)
+
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="trainer@example.com", password="test-password")
         self.client.force_login(self.user)

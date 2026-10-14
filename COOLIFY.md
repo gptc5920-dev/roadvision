@@ -2,7 +2,7 @@
 
 RoadVision uses two Git-based Coolify applications: Django at
 `https://api.roadsense.site` and React at `https://roadsense.site`. The API
-container runs Gunicorn and the durable video-analysis worker. It connects
+container runs Gunicorn and the durable video-analysis and training workers. It connects
 to a separate MariaDB resource and stores uploaded and processed media in a
 private S3-compatible bucket or persistent volume.
 
@@ -127,11 +127,35 @@ The Python provider installs from `requirements.txt`. Startup performs:
 2. database migrations
 3. database-cache table creation
 4. Django admin static-file collection
-5. analysis-worker startup
+5. analysis-worker and training-worker startup
 6. Gunicorn API startup on public port 8000
 
-Startup supervises both processes. If either process exits, it shuts down
+Startup supervises all three processes. If any process exits, it shuts down
 the others and exits so Coolify can restart the application.
+
+Keep `/app/media` on a persistent volume when using training, including when
+uploaded images use S3. Training exports and learned weights are local files in
+`/app/media/training_dataset/yolo_exports`. The training worker renews a lease
+during batches and epochs. After `TRAINING_LEASE_SECONDS` without a heartbeat,
+an interrupted session becomes failed and can be retried from Training History.
+
+If images or video appear missing, run this in the **backend** container:
+
+```bash
+python manage.py check_media_storage --probe
+```
+
+This checks recent database file references and tests a temporary object through
+the configured storage backend. It does not print storage credentials. A failed
+probe indicates a storage permission or connection problem; missing references
+with a passing probe indicate files were removed or an older media volume is no
+longer mounted. Mount `/app/media` on the backend resource, not just the frontend.
+The frontend proxies authenticated media requests to Django. Live previews use
+`image/jpeg` with caching disabled; recorded videos support HTTP byte ranges.
+
+For RTSP/HTTP cameras, the backend must be able to reach the camera host. Network
+open/read waits are bounded by `STREAM_OPEN_TIMEOUT_SECONDS` (10) and
+`STREAM_READ_TIMEOUT_SECONDS` (20), allowing interrupted streams to reconnect.
 
 ### React application at roadsense.site
 

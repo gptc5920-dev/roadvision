@@ -18,6 +18,7 @@ import zipfile
 from decimal import Decimal, InvalidOperation
 from xml.etree import ElementTree
 from urllib.parse import urlparse
+from pathlib import PurePosixPath
 
 from django.contrib import messages
 from django.contrib.auth import login, logout
@@ -28,7 +29,8 @@ from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Min, Q
-from django.http import Http404, HttpResponse, JsonResponse, StreamingHttpResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse, StreamingHttpResponse
+from django.core.files.storage import default_storage
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils.text import get_valid_filename
@@ -53,6 +55,7 @@ from .forms import (
 )
 from .ml import run_analysis
 from .live_detection import LiveDetectionBusy, LiveDetectionError, detect_live_frame
+from .video_capture import open_video_capture
 from .readiness import dataset_readiness, model_readiness, training_dataset_manifest
 from .segmentation import draw_mask_overlay, estimate_detection_mask, pixel_polygon
 from .storage_paths import materialized_field_file, resolve_model_artifact
@@ -487,13 +490,13 @@ def read_video_stream_metadata(stream_url):
         import cv2
     except Exception as exc:
         raise ValueError("OpenCV is required to inspect live stream sources.") from exc
-    capture = cv2.VideoCapture(stream_url)
+    capture = open_video_capture(stream_url, cv2)
     if not capture.isOpened():
         raise ValueError("Live stream could not be opened. Check the URL and camera availability.")
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
     fps = float(capture.get(cv2.CAP_PROP_FPS) or 0) or 30
-    frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    frame_count = max(0, int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0))
     capture.release()
     if width <= 0 or height <= 0:
         width, height = 1280, 720
@@ -1892,6 +1895,42 @@ def training_dataset_module(request):
             messages.success(request, f"Augmentation complete. Generated {job.generated_count} images.")
             return redirect(f"{request.path}?tab=augmentation")
 
+        if action == "retry_training":
+            with transaction.atomic():
+                session = get_object_or_404(
+                    TrainingSession.objects.select_for_update(), pk=request.POST.get("session_id"),
+                )
+                if session.status != TrainingSession.Status.FAILED or session.is_active_video_model:
+                    messages.error(request, "Only failed, inactive training sessions can be retried.")
+                    return redirect(f"{request.path}?tab=history")
+                # Keep the original configuration and frozen labels for a reproducible retry.
+                session.status = TrainingSession.Status.QUEUED
+                session.progress = 0
+                session.current_epoch = 0
+                session.error_message = ""
+                session.worker_id = ""
+                session.heartbeat_at = None
+                session.lease_expires_at = None
+                session.started_at = None
+                session.finished_at = None
+                session.is_validated = False
+                session.validation_notes = ""
+                session.model_file = ""
+                session.model_sha256 = ""
+                session.model_task = ""
+                session.results_dir = ""
+                session.metrics = {}
+                session.local_metrics = {}
+                session.local_evaluation_at = None
+                session.local_test_images = 0
+                for field in ("train_loss", "val_loss", "precision", "recall", "map50", "map5095",
+                              "local_precision", "local_recall", "local_map50", "local_map5095"):
+                    setattr(session, field, None)
+                session.save()
+                audit_dataset(request.user, "train", f"Requeued training session {session.pk} with its frozen dataset.", dataset_version=session.dataset_version)
+            messages.success(request, f"Training session {session.pk} queued for retry.")
+            return redirect(f"{request.path}?tab=history")
+
         if action == "start_training":
             training_form = TrainingConfigForm(request.POST)
             version = current_dataset_version()
@@ -2647,6 +2686,7 @@ def video_visualizer_media(request, analysis_id, media_kind):
     fields = {
         "original": analysis.video,
         "processed": analysis.processed_video,
+        "live-preview": analysis.live_preview_frame,
     }
     field_file = fields.get(media_kind)
     if not field_file:
@@ -2664,14 +2704,15 @@ def video_visualizer_media(request, analysis_id, media_kind):
         )
         raise Http404("Video file is not available.") from exc
 
-    content_type = (
-        "video/mp4"
-        if media_kind == "processed"
-        else VIDEO_MIME_TYPES.get(
+    if media_kind == "live-preview":
+        content_type = "image/jpeg"
+    elif media_kind == "processed":
+        content_type = "video/mp4"
+    else:
+        content_type = VIDEO_MIME_TYPES.get(
             (analysis.file_type or "").lower(),
             mimetypes.guess_type(analysis.original_filename)[0] or "application/octet-stream",
         )
-    )
     range_header = request.headers.get("Range", "")
     byte_range = parse_byte_range(range_header, file_size) if range_header else None
     if range_header and byte_range is None:
@@ -2701,7 +2742,24 @@ def video_visualizer_media(request, analysis_id, media_kind):
     response["Content-Length"] = str(content_length)
     response["Accept-Ranges"] = "bytes"
     response["Content-Disposition"] = "inline"
-    response["Cache-Control"] = "private, max-age=3600"
+    response["Cache-Control"] = "private, no-store" if media_kind == "live-preview" else "private, max-age=3600"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@staff_required
+def stored_media(request, media_path):
+    """Serve private media from the configured storage, including with DEBUG=False."""
+    path = PurePosixPath(media_path)
+    allowed = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".mov", ".avi", ".mkv", ".webm"}
+    if path.is_absolute() or ".." in path.parts or "\\" in media_path or path.suffix.lower() not in allowed:
+        raise Http404("Media file is not available.")
+    try:
+        file_object = default_storage.open(media_path, "rb")
+    except (OSError, ValueError):
+        raise Http404("Media file is not available.")
+    response = FileResponse(file_object, content_type=mimetypes.guess_type(media_path)[0] or "application/octet-stream")
+    response["Cache-Control"] = "private, max-age=300"
     response["X-Content-Type-Options"] = "nosniff"
     return response
 

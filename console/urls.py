@@ -20,6 +20,7 @@ urlpatterns = [
     path("api/sources/", api.sources_api, name="api_sources"),
     path("api/personnel/", api.personnel_api, name="api_personnel"),
     path("api/settings/", api.settings_api, name="api_settings"),
+    path("media/<path:media_path>", views.stored_media, name="stored_media"),
     path("api/actions/analyzer/", api.analyzer_action_api, name="api_analyzer_action"),
     path("api/actions/dataset/", api.dataset_action_api, name="api_dataset_action"),
     path("api/actions/modules/<slug:module>/", api.module_action_api, name="api_module_action"),

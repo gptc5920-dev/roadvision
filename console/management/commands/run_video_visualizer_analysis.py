@@ -28,6 +28,7 @@ from console.models import (
 from console.segmentation import draw_mask_overlay, estimate_detection_mask, normalized_polygon
 from console.readiness import model_readiness
 from console.storage_paths import resolve_model_artifact
+from console.video_capture import open_video_capture
 
 
 class AnalysisCancelled(CommandError):
@@ -435,7 +436,7 @@ class Command(BaseCommand):
                     analysis.video.close()
         else:
             source = analysis.source_url
-        capture = cv2.VideoCapture(source)
+        capture = open_video_capture(source, cv2)
         self._active_capture = capture
         if analysis.is_continuous and not analysis.video:
             capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -530,7 +531,7 @@ class Command(BaseCommand):
                     lease_expires_at=now + timedelta(seconds=settings.ANALYSIS_LEASE_SECONDS),
                 )
                 time.sleep(settings.CONTINUOUS_STREAM_RECONNECT_SECONDS)
-                capture = cv2.VideoCapture(source)
+                capture = open_video_capture(source, cv2)
                 self._active_capture = capture
                 capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 if capture.isOpened():

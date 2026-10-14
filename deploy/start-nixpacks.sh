@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 worker_pid=""
+training_pid=""
 web_pid=""
 # This application serves only Django's API; React has its own deployment.
 export PORT="${PORT:-8000}"
@@ -15,8 +16,12 @@ shutdown() {
     if [[ -n "${worker_pid}" ]]; then
         kill -TERM "${worker_pid}" 2>/dev/null || true
     fi
+    if [[ -n "${training_pid}" ]]; then
+        kill -TERM "${training_pid}" 2>/dev/null || true
+    fi
     wait "${web_pid}" 2>/dev/null || true
     wait "${worker_pid}" 2>/dev/null || true
+    wait "${training_pid}" 2>/dev/null || true
 }
 
 trap shutdown EXIT INT TERM
@@ -35,11 +40,16 @@ python manage.py run_video_visualizer_analysis \
     --poll-interval "${ANALYSIS_POLL_INTERVAL:-2}" &
 worker_pid=$!
 
+python manage.py run_yolo_training \
+    --watch \
+    --poll-interval "${TRAINING_POLL_INTERVAL:-5}" &
+training_pid=$!
+
 gunicorn config.wsgi:application --config gunicorn.conf.py &
 web_pid=$!
 
 set +e
-wait -n "${worker_pid}" "${web_pid}"
+wait -n "${worker_pid}" "${training_pid}" "${web_pid}"
 exit_code=$?
 set -e
 

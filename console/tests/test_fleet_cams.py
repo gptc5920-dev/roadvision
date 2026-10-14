@@ -143,6 +143,15 @@ class FleetCameraAnalyzerTests(TestCase):
         self.assertEqual(analysis.route_metadata["fleet_device_id"], self.device.pk)
         self.assertEqual(analysis.route_metadata["capture_type"], "live-stream")
 
+    @patch("console.views.read_video_stream_metadata")
+    def test_stream_api_returns_the_selected_analyzer_redirect(self, metadata_reader):
+        metadata_reader.return_value = {"file_hash": "f" * 64, "file_size": 0, "file_type": "stream", "width": 320,
+                                        "height": 240, "fps": 25, "frame_count": 0, "duration_seconds": 0}
+        response = self.client.post("/api/actions/modules/fleet-cams/", {"action": "analyze_fleet_stream", "device_id": self.device.pk})
+        self.assertEqual(response.status_code, 200, response.content)
+        analysis = VideoVisualizerAnalysis.objects.get()
+        self.assertEqual(response.json()["redirect"], f"/app/analyzer?analysis={analysis.pk}")
+
     def test_running_continuous_stream_can_be_stopped_gracefully(self):
         analysis = VideoVisualizerAnalysis.objects.create(
             source_url=self.device.stream_url,

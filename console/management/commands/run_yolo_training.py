@@ -4,15 +4,23 @@ import json
 import math
 import shutil
 import time
+import uuid
+from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from console.models import AnalyzerConfiguration, DatasetImage, DatasetSplit, TrainingSession
 from console.readiness import dataset_readiness, model_readiness, training_dataset_manifest
+from console.storage_paths import portable_model_artifact_value
+
+
+class TrainingLeaseLost(CommandError):
+    pass
 
 
 AUGMENTATION_PROFILES = {
@@ -260,6 +268,8 @@ class Command(BaseCommand):
         except Exception as exc:
             raise CommandError("Ultralytics is not installed. Run pip install -r requirements.txt.") from exc
 
+        if options["watch"]:
+            self.stdout.write("Training worker ready; waiting for queued sessions.")
         while True:
             session = self.claim_next(options.get("session_id"))
             if session is None:
@@ -270,10 +280,26 @@ class Command(BaseCommand):
                 return
             self.process_session(session, YOLO)
             if options.get("session_id"):
+                session.refresh_from_db(fields=["status", "error_message"])
+                if session.status == TrainingSession.Status.FAILED:
+                    raise CommandError(session.error_message)
                 return
 
     def claim_next(self, session_id=None):
+        now = timezone.now()
         with transaction.atomic():
+            # Interrupted jobs become retryable, including jobs from before leases existed.
+            TrainingSession.objects.filter(status=TrainingSession.Status.RUNNING).filter(
+                Q(lease_expires_at__lt=now)
+                | Q(lease_expires_at__isnull=True, started_at__lt=now - timedelta(seconds=settings.TRAINING_LEASE_SECONDS))
+                | Q(lease_expires_at__isnull=True, started_at__isnull=True)
+            ).update(
+                status=TrainingSession.Status.FAILED,
+                error_message="Training worker stopped responding. Retry this session to restart from its frozen dataset.",
+                finished_at=now,
+                worker_id="",
+                lease_expires_at=None,
+            )
             sessions = TrainingSession.objects.select_for_update().filter(status=TrainingSession.Status.QUEUED)
             if session_id:
                 sessions = sessions.filter(pk=session_id)
@@ -281,15 +307,33 @@ class Command(BaseCommand):
             if session is None:
                 return None
             session.status = TrainingSession.Status.RUNNING
-            session.started_at = timezone.now()
+            session.started_at = now
+            session.finished_at = None
+            session.worker_id = uuid.uuid4().hex
+            session.heartbeat_at = now
+            session.lease_expires_at = now + timedelta(seconds=settings.TRAINING_LEASE_SECONDS)
             session.progress = 1
             session.error_message = ""
-            session.save(update_fields=["status", "started_at", "progress", "error_message"])
+            session.save(update_fields=["status", "started_at", "finished_at", "worker_id", "heartbeat_at", "lease_expires_at", "progress", "error_message"])
             return session
+
+    def renew_lease(self, session, **updates):
+        now = timezone.now()
+        owned = TrainingSession.objects.filter(
+            pk=session.pk, status=TrainingSession.Status.RUNNING, worker_id=session.worker_id,
+        ).update(
+            heartbeat_at=now,
+            lease_expires_at=now + timedelta(seconds=settings.TRAINING_LEASE_SECONDS),
+            **updates,
+        )
+        if not owned:
+            raise TrainingLeaseLost("Training session is no longer owned by this worker.")
 
     def process_session(self, session, YOLO):
         self.stdout.write(f"Running training session {session.pk} ({session.model_name})")
+        expected_worker_id = session.worker_id
         try:
+            self.renew_lease(session)
             training_device = session.device
             if str(training_device).lower() == "auto":
                 import torch
@@ -304,12 +348,22 @@ class Command(BaseCommand):
             if model.task != "segment":
                 raise CommandError("Training architecture must be an instance-segmentation model.")
 
+            last_heartbeat = time.monotonic()
+
+            def on_batch_end(trainer):
+                nonlocal last_heartbeat
+                if time.monotonic() - last_heartbeat >= min(15, settings.TRAINING_LEASE_SECONDS / 3):
+                    self.renew_lease(session)
+                    last_heartbeat = time.monotonic()
+
             def on_epoch_end(trainer):
                 session.current_epoch = int(getattr(trainer, "epoch", 0)) + 1
                 session.progress = min(99, int((session.current_epoch / max(session.epochs, 1)) * 100))
-                session.save(update_fields=["current_epoch", "progress"])
+                self.renew_lease(session, current_epoch=session.current_epoch, progress=session.progress)
 
             model.add_callback("on_train_epoch_end", on_epoch_end)
+            model.add_callback("on_train_batch_end", on_batch_end)
+            model.add_callback("on_val_batch_end", on_batch_end)
             results = model.train(
                 data=str(data_yaml),
                 epochs=session.epochs,
@@ -332,13 +386,14 @@ class Command(BaseCommand):
                 name="train",
                 exist_ok=True,
             )
+            self.renew_lease(session)
             save_dir = Path(getattr(results, "save_dir", export_root / "runs" / "train"))
             metrics = read_latest_metrics(save_dir / "results.csv")
             for field, value in metrics.items():
                 if value is not None:
                     setattr(session, field, value)
             best_model = save_dir / "weights" / "best.pt"
-            session.model_file = str(best_model) if best_model.exists() else ""
+            session.model_file = portable_model_artifact_value(best_model) if best_model.exists() else ""
             if not best_model.exists():
                 raise CommandError("Training completed without producing best.pt.")
             hasher = hashlib.sha256()
@@ -348,6 +403,7 @@ class Command(BaseCommand):
             session.model_sha256 = hasher.hexdigest()
             session.results_dir = str(save_dir)
             best_model_instance = YOLO(str(best_model))
+            best_model_instance.add_callback("on_val_batch_end", on_batch_end)
             if best_model_instance.task != "segment":
                 raise CommandError("Trained artifact is not an instance-segmentation model.")
             test_results = best_model_instance.val(
@@ -408,9 +464,14 @@ class Command(BaseCommand):
             if not readiness["ready"]:
                 session.is_validated = False
                 session.validation_notes = "; ".join(readiness["errors"])
-            session.save()
-            if session.is_validated:
-                with transaction.atomic():
+            with transaction.atomic():
+                owner = TrainingSession.objects.select_for_update().get(pk=session.pk)
+                if owner.status != TrainingSession.Status.RUNNING or owner.worker_id != session.worker_id:
+                    raise TrainingLeaseLost("Training session ownership changed before completion.")
+                session.worker_id = ""
+                session.lease_expires_at = None
+                session.save()
+                if session.is_validated:
                     configuration, _ = AnalyzerConfiguration.objects.get_or_create(pk=1)
                     configuration = AnalyzerConfiguration.objects.select_for_update().get(pk=configuration.pk)
                     TrainingSession.objects.exclude(pk=session.pk).update(is_active_video_model=False)
@@ -420,8 +481,13 @@ class Command(BaseCommand):
                     configuration.save(update_fields=["model_session", "updated_at"])
             self.stdout.write(self.style.SUCCESS(f"Training session {session.pk} complete."))
         except Exception as exc:
-            session.status = TrainingSession.Status.FAILED
-            session.error_message = str(exc)
-            session.finished_at = timezone.now()
-            session.save(update_fields=["status", "error_message", "finished_at"])
+            TrainingSession.objects.filter(
+                pk=session.pk, status=TrainingSession.Status.RUNNING, worker_id=expected_worker_id,
+            ).update(
+                status=TrainingSession.Status.FAILED,
+                error_message=str(exc)[:4000],
+                finished_at=timezone.now(),
+                worker_id="",
+                lease_expires_at=None,
+            )
             self.stderr.write(self.style.ERROR(f"Training session {session.pk} failed: {exc}"))

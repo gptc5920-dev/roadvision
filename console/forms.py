@@ -370,7 +370,7 @@ class TrainingConfigForm(forms.Form):
     epochs = forms.IntegerField(min_value=1, max_value=1000, initial=100)
     batch_size = forms.IntegerField(min_value=1, max_value=256, initial=16)
     image_size = forms.IntegerField(min_value=128, max_value=2048, initial=512)
-    learning_rate = forms.DecimalField(min_value=0.000001, max_digits=8, decimal_places=6, initial=0.001)
+    learning_rate = forms.DecimalField(min_value=0.000001, max_value=1, max_digits=8, decimal_places=6, initial=0.001)
     device = forms.RegexField(regex=r"^(auto|cpu|mps|\d+(,\d+)*)$", max_length=60, initial="cpu",
                              error_messages={"invalid": "Use auto, cpu, mps, or GPU indices such as 0 or 0,1."})
     patience = forms.IntegerField(min_value=0, max_value=300, initial=30)

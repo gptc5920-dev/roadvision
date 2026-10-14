@@ -111,6 +111,15 @@ queued as soon as the reviewed dataset readiness gate passes. Run the durable au
 
 `python manage.py run_yolo_training --watch`
 
+The Nixpacks startup script runs and supervises this training worker alongside
+the API and video worker. Local development still needs the training command in
+a separate terminal, using `--settings=config.settings_development` with SQLite.
+Training History shows progress and errors and lets you retry failed sessions
+with their original frozen dataset. Interrupted jobs become retryable after the
+worker lease expires (`TRAINING_LEASE_SECONDS`, default one hour). Only models
+that pass the held-out quality gate replace the active model. Keep the local
+training export directory on persistent storage, including when uploads use S3.
+
 When a trained model passes the held-out test gate, it automatically becomes
 the active video-analysis and image-labeling model.
 
@@ -174,6 +183,7 @@ The migration `0015_unify_legacy_analyses` exposes old `VideoAnalysis`/`Detectio
 - Worker: `python manage.py run_video_visualizer_analysis --watch`
 - One job: `python manage.py run_video_visualizer_analysis --analysis-id ID`
 - Local model evaluation: `python manage.py evaluate_pothole_model --session-id ID`
+- Media diagnostics: `python manage.py check_media_storage --probe`
 - Model/video benchmark: `python manage.py benchmark_pothole_model C:\path\survey.mp4 --session-id ID`
 - Tests: `python manage.py test`
 - Read-only concurrency smoke check: `python manage.py roadvision_load_check --requests 50 --concurrency 5`
