@@ -2,6 +2,7 @@ import io
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
@@ -39,6 +40,38 @@ class MediaAndMapTests(TestCase):
         self.assertEqual(self.client.get("/media/training_dataset/best.pt").status_code, 404)
         self.assertEqual(self.client.get("/media/../outside.jpg").status_code, 404)
         self.assertEqual(self.client.get("/media/missing.jpg").status_code, 404)
+
+    def test_track_snapshots_use_authenticated_api_urls_and_storage_reads(self):
+        analysis = VideoVisualizerAnalysis.objects.create(status=VideoVisualizerStatus.COMPLETE)
+        track = VideoPotholeTrack.objects.create(analysis=analysis, track_id=1)
+        track.snapshot_frame.save("frame.jpg", ContentFile(b"frame-image"))
+        track.snapshot_crop.save("crop.jpg", ContentFile(b"crop-image"))
+        # An external/private storage URL must never be needed by the browser.
+        with patch.object(type(default_storage), "url", create=True, side_effect=AssertionError("raw storage URL requested")):
+            payload = self.client.get(f"/api/analyzer/?analysis={analysis.pk}").json()
+            serialized = payload["selected"]["tracks"][0]
+            for kind, content in [("frame", b"frame-image"), ("crop", b"crop-image")]:
+                url = serialized[f"snapshot{kind.title()}Url"]
+                self.assertEqual(url, f"/api/detections/{track.pk}/snapshot/{kind}/")
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response["Content-Type"], "image/jpeg")
+                self.assertTrue(response["Cache-Control"].startswith("private"))
+                self.assertEqual(b"".join(response.streaming_content), content)
+        self.client.logout()
+        self.assertEqual(self.client.get(url).status_code, 302)
+        viewer = get_user_model().objects.create_user(username="snapshot-viewer")
+        self.client.force_login(viewer)
+        self.assertEqual(self.client.get(url).status_code, 302)
+
+    def test_track_snapshot_handles_missing_files_and_invalid_requests(self):
+        analysis = VideoVisualizerAnalysis.objects.create(status=VideoVisualizerStatus.COMPLETE)
+        track = VideoPotholeTrack.objects.create(
+            analysis=analysis, track_id=1, snapshot_frame="missing.jpg",
+        )
+        for kind in ["frame", "crop", "original"]:
+            self.assertEqual(self.client.get(f"/api/detections/{track.pk}/snapshot/{kind}/").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/detections/{track.pk + 1}/snapshot/frame/").status_code, 404)
 
     def test_live_preview_is_an_image_and_is_not_cached(self):
         analysis = VideoVisualizerAnalysis.objects.create(status=VideoVisualizerStatus.RUNNING, heartbeat_at=timezone.now())

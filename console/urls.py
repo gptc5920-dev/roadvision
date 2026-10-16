@@ -15,6 +15,7 @@ urlpatterns = [
     path("api/reports/", api.reports_api, name="api_reports"),
     path("api/fleet/", api.fleet_api, name="api_fleet"),
     path("api/detections/", api.detections_api, name="api_detections"),
+    path("api/detections/<int:track_id>/snapshot/<str:kind>/", views.track_snapshot, name="track_snapshot"),
     path("api/analyzer/", api.analyzer_api, name="api_analyzer"),
     path("api/dataset/", api.dataset_api, name="api_dataset"),
     path("api/sources/", api.sources_api, name="api_sources"),

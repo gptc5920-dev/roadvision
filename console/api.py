@@ -221,8 +221,8 @@ def _track(track):
         "roadSection": track.road_section,
         "reviewStatus": track.review_status,
         "remarks": track.remarks,
-        "snapshotCropUrl": _file_url(track.snapshot_crop),
-        "snapshotFrameUrl": _file_url(track.snapshot_frame),
+        "snapshotCropUrl": reverse("track_snapshot", args=[track.pk, "crop"]) if track.snapshot_crop else "",
+        "snapshotFrameUrl": reverse("track_snapshot", args=[track.pk, "frame"]) if track.snapshot_frame else "",
         "segmentationPoints": polygon,
         "maskSource": mask_source,
     }

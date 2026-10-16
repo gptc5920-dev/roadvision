@@ -2748,6 +2748,23 @@ def video_visualizer_media(request, analysis_id, media_kind):
 
 
 @staff_required
+def track_snapshot(request, track_id, kind):
+    """Keep snapshot requests on the authenticated app origin for any storage."""
+    track = get_object_or_404(VideoPotholeTrack, pk=track_id)
+    field_file = {"frame": track.snapshot_frame, "crop": track.snapshot_crop}.get(kind)
+    if not field_file:
+        raise Http404("Track snapshot is not available.")
+    try:
+        file_object = field_file.storage.open(field_file.name, "rb")
+    except (OSError, ValueError):
+        raise Http404("Track snapshot is not available.")
+    response = FileResponse(file_object, content_type=mimetypes.guess_type(field_file.name)[0] or "application/octet-stream")
+    response["Cache-Control"] = "private, max-age=300"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@staff_required
 def stored_media(request, media_path):
     """Serve private media from the configured storage, including with DEBUG=False."""
     path = PurePosixPath(media_path)
