@@ -47,6 +47,7 @@ from .forms import (
     GroundTruthCountForm,
     PersonnelAccountForm,
     ProfileSettingsForm,
+    RoadReportForm,
     SignInForm,
     TrackReviewForm,
     TrainingConfigForm,
@@ -749,6 +750,7 @@ def save_visualizer_video(upload, filename, metadata, form, configuration, user,
     if form.cleaned_data.get("camera_source"):
         route_metadata["camera_source"] = form.cleaned_data["camera_source"]
     analysis = VideoVisualizerAnalysis(
+        report=form.cleaned_data.get("report_id"),
         original_filename=filename,
         file_hash=metadata["file_hash"],
         file_size=metadata["file_size"],
@@ -809,6 +811,7 @@ def create_visualizer_stream_analysis(stream_url, metadata, form, configuration,
     if form.cleaned_data.get("camera_source"):
         route_metadata["camera_source"] = form.cleaned_data["camera_source"]
     analysis = VideoVisualizerAnalysis(
+        report=form.cleaned_data.get("report_id"),
         source_url=stream_url,
         original_filename=stream_url,
         file_hash=metadata["file_hash"],
@@ -2168,6 +2171,26 @@ def yolo_dataset_export(request):
 
 @staff_required
 def video_visualizer(request):
+    if request.method == "POST" and request.POST.get("action") == "create_report":
+        form = RoadReportForm(request.POST)
+        if not form.is_valid():
+            return JsonResponse({"error": "Correct the report details.", "fields": form.errors}, status=400)
+        report = form.save(commit=False)
+        report.detected_at = timezone.now()
+        report.save()
+        audit_dataset(request.user, "report-create", f"Created road report {report.pk}.")
+        messages.success(request, f"Report #{report.pk} created. Add footage to start analysis.")
+        return redirect(f"{request.path}?report={report.pk}")
+    if request.method == "POST" and request.POST.get("report_id"):
+        report_id = request.POST["report_id"]
+        if not report_id.isascii() or not report_id.isdecimal() or len(report_id) > 18 or int(report_id) < 1:
+            return JsonResponse({"error": "Invalid report identifier."}, status=400)
+        if request.POST.get("action") != "upload_video":
+            get_object_or_404(PotholeReport, pk=report_id)
+            if request.POST.get("analysis_id"):
+                get_object_or_404(VideoVisualizerAnalysis, pk=request.POST["analysis_id"], report_id=report_id)
+            if request.POST.get("track_id"):
+                get_object_or_404(VideoPotholeTrack, pk=request.POST["track_id"], analysis__report_id=report_id)
     if request.method == "POST" and request.POST.get("action") == "remove_analysis":
         with transaction.atomic():
             analysis = get_object_or_404(
@@ -2323,6 +2346,7 @@ def video_visualizer(request):
                 request.POST,
                 request.FILES,
                 default_confidence=configuration.confidence_threshold,
+                require_report=True,
             )
             if upload_form.is_valid():
                 upload = request.FILES.get("video")
@@ -2374,9 +2398,12 @@ def video_visualizer(request):
                     audit_dataset(request.user, "video-queue", f"Queued video visualizer analysis {analysis.pk}.")
                     start_analysis_worker(analysis.pk)
                     messages.success(request, f"Video analysis queued for {analysis.original_filename}.")
-                return redirect(f"{request.path}?analysis={analysis.pk}")
-            messages.error(request, "Video upload details are invalid.")
-            return redirect("admin_video_analyzer_explicit")
+                report_query = f"report={analysis.report_id}&" if analysis.report_id else ""
+                return redirect(f"{request.path}?{report_query}analysis={analysis.pk}")
+            return JsonResponse(
+                {"error": "Choose a report and correct the upload details.", "fields": upload_form.errors},
+                status=400,
+            )
 
         if action == "set_active_video_model":
             messages.info(request, "Model selection has moved to Settings.")
@@ -2830,7 +2857,7 @@ def stored_media(request, media_path):
 
 @staff_required
 def video_visualizer_report(request, analysis_id):
-    analysis = get_object_or_404(VideoVisualizerAnalysis.objects.select_related("model_session").prefetch_related("tracks"), pk=analysis_id)
+    analysis = get_object_or_404(VideoVisualizerAnalysis.objects.select_related("model_session", "report").prefetch_related("tracks"), pk=analysis_id)
     response = HttpResponse(content_type="text/csv")
     response["Content-Disposition"] = f'attachment; filename="roadvision-video-inspection-{analysis.pk}.csv"'
     writer = csv.writer(response)
@@ -2839,6 +2866,9 @@ def video_visualizer_report(request, analysis_id):
     writer.writerow(["Road location", analysis.road_section])
     writer.writerow(["Road station / chainage", analysis.chainage_station])
     writer.writerow(["Model", analysis.model_session.model_name if analysis.model_session else "No model"])
+    if analysis.report_id:
+        writer.writerow(["Report ID", analysis.report_id])
+        writer.writerow(["Report city", analysis.report.city])
     writer.writerow(["Model task", analysis.model_session.model_task if analysis.model_session else ""])
     writer.writerow(["Model file", analysis.model_session.model_file if analysis.model_session else ""])
     writer.writerow(["Model SHA-256", analysis.model_session.model_sha256 if analysis.model_session else ""])

@@ -542,6 +542,10 @@ class AnalyzerConfiguration(models.Model):
 
 
 class VideoVisualizerAnalysis(models.Model):
+    report = models.ForeignKey(
+        PotholeReport, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="video_analyses",
+    )
     legacy_analysis = models.OneToOneField(
         VideoAnalysis,
         on_delete=models.SET_NULL,

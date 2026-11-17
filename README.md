@@ -172,6 +172,13 @@ real-time factor, and the effective frame skip so speed figures are not confused
 
 ## Job lifecycle
 
+Video Analyzer is report-specific. Create or select a road report before adding
+footage, a Stream URL, or a camera capture. Each report has its own analysis queue,
+track results, and exports; the map and dashboard open that report's analyzer.
+Direct links to an analysis restore its report context. Existing unlinked runs
+remain available under Unassigned runs and are not automatically attached to a
+report. The report-link migration preserves all existing analysis data.
+
 Analysis jobs use database leases and follow `queued -> running -> complete`, with retry, failed, and cancelled states. Expired worker leases are reclaimed. Each failure is appended to bounded error history, and the UI supports retry and cancellation.
 
 Video uploads and processed outputs are streamed rather than copied into web-worker memory. Detailed frame detections are gzip artifacts instead of large MySQL JSON values. Set the optional S3-compatible variables from `.env.example` to move media out of the local filesystem.

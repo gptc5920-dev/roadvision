@@ -14,6 +14,7 @@ from console.models import (
     AppRole,
     DeviceStatus,
     FleetDevice,
+    PotholeReport,
     TrainingSession,
     UserRole,
     VideoSourceType,
@@ -75,6 +76,10 @@ class FleetCameraAnalyzerTests(TestCase):
             stream_url="https://camera.example.com/live",
             road_section="Aguinaldo Highway northbound",
             chainage_station="CH 12+500",
+        )
+        self.report = PotholeReport.objects.create(
+            lat=14.6, lng=121, city="Cavite", device_id=self.device.pk,
+            severity="low", detected_at=timezone.now(),
         )
 
     def test_fleet_page_exposes_stream_and_live_capture_controls(self):
@@ -143,6 +148,7 @@ class FleetCameraAnalyzerTests(TestCase):
             with self.subTest(source=source):
                 response = self.client.post("/api/actions/analyzer/", {
                     "action": "upload_video", "source_type": "dashcam" if source == "dashcam" else "webcam",
+                    "report_id": self.report.pk,
                     "camera_source": source, "road_section": "Road 1",
                     "video": SimpleUploadedFile(f"analyzer-{source}.webm", b"recorded-video", content_type="video/webm"),
                 })

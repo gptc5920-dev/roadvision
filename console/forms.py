@@ -13,6 +13,7 @@ from .models import (
     AppRole,
     DeviceStatus,
     FleetDevice,
+    PotholeReport,
     ReportStatus,
     TrainingModelArchitecture,
     TrainingSession,
@@ -147,6 +148,16 @@ class ProfileSettingsForm(forms.Form):
             profile.full_name = full_name
             profile.save(update_fields=["full_name"])
         return self.user
+
+
+class RoadReportForm(forms.ModelForm):
+    lat = forms.FloatField(min_value=-90, max_value=90)
+    lng = forms.FloatField(min_value=-180, max_value=180)
+    notes = forms.CharField(max_length=2000, required=False, widget=forms.Textarea)
+
+    class Meta:
+        model = PotholeReport
+        fields = ["city", "device_id", "lat", "lng", "severity", "notes"]
 
 
 class FleetDeviceForm(forms.Form):
@@ -422,6 +433,7 @@ class VideoVisualizerUploadForm(forms.Form):
     ]
 
     video = forms.FileField(required=False)
+    report_id = forms.ModelChoiceField(queryset=PotholeReport.objects.all(), required=False)
     gps_file = forms.FileField(required=False)
     stream_url = forms.CharField(max_length=500, required=False)
     source_type = forms.ChoiceField(choices=VideoSourceType.choices, initial=VideoSourceType.UPLOAD)
@@ -437,8 +449,9 @@ class VideoVisualizerUploadForm(forms.Form):
     calibration_m_per_pixel = forms.DecimalField(min_value=0.000001, max_value=1, decimal_places=6, required=False)
     calibration_notes = forms.CharField(max_length=255, required=False)
 
-    def __init__(self, *args, default_confidence=50, **kwargs):
+    def __init__(self, *args, default_confidence=50, require_report=False, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields["report_id"].required = require_report
         choices = list(self.SENSITIVITY_CHOICES)
         known_values = {value for value, _label in choices}
         if default_confidence not in known_values:

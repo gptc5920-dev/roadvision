@@ -15,6 +15,7 @@ from console.forms import VideoVisualizerUploadForm
 from console.models import (
     AnalyzerConfiguration,
     DatasetImage,
+    PotholeReport,
     TrainingSession,
     VideoPotholeTrack,
     VideoTrackReviewStatus,
@@ -447,6 +448,10 @@ class AnalyzerSettingsTests(TestCase):
             starter.assert_called_once_with(analysis.pk)
 
     def test_default_analyzer_prefers_latest_completed_video(self):
+        report = PotholeReport.objects.create(
+            lat=14.6, lng=121, city="Manila", device_id="camera",
+            severity="low", detected_at=timezone.now(),
+        )
         with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
             completed = VideoVisualizerAnalysis.objects.create(
                 video=SimpleUploadedFile("completed.mp4", b"completed", content_type="video/mp4"),
@@ -457,7 +462,7 @@ class AnalyzerSettingsTests(TestCase):
                 model_session=self.model,
                 created_by=self.user,
             )
-            VideoVisualizerAnalysis.objects.create(
+            running = VideoVisualizerAnalysis.objects.create(
                 video=SimpleUploadedFile("new-running.mp4", b"running", content_type="video/mp4"),
                 original_filename="new-running.mp4",
                 file_hash="2" * 64,
@@ -466,7 +471,8 @@ class AnalyzerSettingsTests(TestCase):
                 model_session=self.model,
                 created_by=self.user,
             )
-            response = self.client.get("/api/analyzer/")
+            VideoVisualizerAnalysis.objects.filter(pk__in=[completed.pk, running.pk]).update(report=report)
+            response = self.client.get(f"/api/analyzer/?report={report.pk}")
             self.assertEqual(response.json()["selected"]["id"], completed.pk)
 
     def test_detection_results_are_managed_in_defect_inventory(self):

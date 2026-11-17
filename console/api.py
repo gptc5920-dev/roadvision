@@ -22,7 +22,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
 from .authz import is_admin, is_staff_role, user_role
-from .forms import SignInForm, DatasetUploadForm, TrainingConfigForm, DetectionTestForm, FleetDeviceForm
+from .forms import SignInForm, DatasetUploadForm, TrainingConfigForm, DetectionTestForm, FleetDeviceForm, RoadReportForm
 from .models import (
     AppRole,
     DatasetImage,
@@ -233,6 +233,7 @@ def _analysis(analysis, include_tracks=False):
     progress, remaining = views.video_analysis_progress(analysis)
     item = {
         "id": analysis.pk,
+        "reportId": analysis.report_id,
         "name": analysis.original_filename,
         "status": analysis.status,
         "sourceType": analysis.source_type,
@@ -348,6 +349,8 @@ def reports_api(request):
         analysis__status__in=[VideoVisualizerStatus.COMPLETE, VideoVisualizerStatus.RUNNING],
         latitude__isnull=False, longitude__isnull=False,
     ).exclude(review_status=VideoTrackReviewStatus.REJECTED).order_by("-analysis__created_at", "track_id")
+    if selected_report is not None:
+        mapped_tracks = mapped_tracks.filter(analysis__report_id=selected_report)
     return JsonResponse({
         "reports": report_items,
         "detections": [
@@ -429,13 +432,31 @@ def detections_api(request):
 @api_staff_required
 @require_GET
 def analyzer_api(request):
-    analyses = list(VideoVisualizerAnalysis.objects.select_related("model_session").all()[:30])
+    report_id, error = _query_integer(request, "report", default=None)
+    if error:
+        return error
     selected_id, error = _query_integer(request, "analysis", default=None)
     if error:
         return error
+    report = None
+    if report_id is not None:
+        report = PotholeReport.objects.filter(pk=report_id).first()
+        if report is None:
+            return JsonResponse({"error": "The requested report was not found."}, status=404)
     selected = None
     if selected_id is not None:
-        selected = VideoVisualizerAnalysis.objects.select_related("model_session").prefetch_related("tracks").filter(pk=selected_id).first()
+        selected_query = VideoVisualizerAnalysis.objects.select_related("model_session", "report").prefetch_related("tracks")
+        if report_id is not None:
+            selected_query = selected_query.filter(report_id=report_id)
+        selected = selected_query.filter(pk=selected_id).first()
+        if selected is None:
+            return JsonResponse({"error": "The requested analysis was not found for this report."}, status=404)
+        if report is None:
+            report = selected.report
+    analyses = (
+        list(VideoVisualizerAnalysis.objects.select_related("model_session").filter(report=report)[:30])
+        if report is not None else ([selected] if selected is not None else [])
+    )
     if selected is None and analyses:
         # Keep the latest completed review visible while a newer job is still
         # processing. Operators can explicitly select the active job from the
@@ -447,7 +468,7 @@ def analyzer_api(request):
         selected = (
             VideoVisualizerAnalysis.objects.select_related("model_session")
             .prefetch_related("tracks")
-            .filter(pk=default_analysis.pk)
+            .filter(pk=default_analysis.pk, report=report)
             .first()
         )
     if selected and selected.status in {
@@ -459,6 +480,11 @@ def analyzer_api(request):
     configuration = views.analyzer_configuration()
     readiness = views.model_readiness(configuration.model_session)
     return JsonResponse({
+        "report": _report(report) if report else None,
+        "reports": [_report(item) for item in PotholeReport.objects.all()[:500]],
+        "unassignedAnalyses": [
+            _analysis(item) for item in VideoVisualizerAnalysis.objects.select_related("model_session").filter(report__isnull=True)[:30]
+        ] if report is None and selected is None else [],
         "analyses": [_analysis(analysis) for analysis in analyses],
         "selected": _analysis(selected, include_tracks=True) if selected else None,
         "configuration": {
@@ -718,6 +744,7 @@ def _action_result(request, response):
 
 
 ANALYZER_ACTIONS = {
+    "create_report",
     "stop_continuous_analysis", "cancel_analysis", "retry_analysis", "restart_analysis", "remove_analysis",
     "reanalyze_with_sensitivity", "reanalyze_with_estimated_masks", "upload_video",
     "set_ground_truth", "review_track", "merge_tracks", "remove_track", "add_track_to_dataset",
@@ -761,6 +788,7 @@ def _run_action(request, allowed_actions, handler):
     if error:
         return error
     form_class = {
+        "create_report": RoadReportForm,
         "upload_images": DatasetUploadForm,
         "start_training": TrainingConfigForm,
         "test_detection": DetectionTestForm,

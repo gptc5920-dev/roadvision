@@ -93,6 +93,8 @@ class MediaAndMapTests(TestCase):
         VideoPotholeTrack.objects.create(analysis=analysis, track_id=2)
         VideoPotholeTrack.objects.create(analysis=analysis, track_id=3, latitude=14.6, longitude=121.0, review_status="rejected")
         report = PotholeReport.objects.create(lat=14.6, lng=121.0, city="Manila", device_id="CAM-01", severity="high", detected_at=timezone.now())
+        analysis.report = report
+        analysis.save(update_fields=["report"])
         PotholeReport.objects.create(lat=14.7, lng=121.1, city="Manila", device_id="CAM-02", severity="low", detected_at=timezone.now())
         result = self.client.get(f"/api/reports/?report={report.pk}").json()
         self.assertEqual([row["id"] for row in result["reports"]], [report.pk])
