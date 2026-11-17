@@ -16,13 +16,14 @@ from django.db import IntegrityError, transaction
 from django.db.models import Avg, Count, Q
 from django.http import Http404, JsonResponse
 from django.middleware.csrf import get_token
+from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
 from .authz import is_admin, is_staff_role, user_role
-from .forms import SignInForm, DatasetUploadForm, TrainingConfigForm, DetectionTestForm, FleetDeviceForm, RoadReportForm
+from .forms import SignInForm, DatasetUploadForm, TrainingConfigForm, DetectionTestForm, FleetDeviceForm, RoadReportForm, RoadReportEditForm
 from .models import (
     AppRole,
     DatasetImage,
@@ -370,6 +371,30 @@ def reports_api(request):
             "truncated": counts["total"] > len(report_items),
         },
         "statusOptions": [{"value": value, "label": label} for value, label in ReportStatus.choices],
+    })
+
+
+@api_staff_required
+@require_GET
+def report_records_api(request):
+    limit, error = _query_integer(request, "limit", default=50, maximum=100)
+    if error:
+        return error
+    offset, error = _query_integer(request, "offset", default=0, minimum=0, maximum=2147483647)
+    if error:
+        return error
+    reports = PotholeReport.objects.all()
+    term = request.GET.get("q", "").strip()
+    if term:
+        matches = Q(city__icontains=term) | Q(device_id__icontains=term) | Q(notes__icontains=term)
+        if term.isascii() and term.isdecimal() and len(term) <= 18:
+            matches |= Q(pk=int(term))
+        reports = reports.filter(matches)
+    total = reports.count()
+    return JsonResponse({
+        "reports": [_report(report) for report in reports.order_by("-detected_at", "-pk")[offset:offset + limit]],
+        "query": term,
+        "pagination": {"limit": limit, "offset": offset, "total": total},
     })
 
 
@@ -728,7 +753,7 @@ def _action_result(request, response):
             query["tab"] = ["training"]
         suffix = urlencode(query, doseq=True)
         payload["redirect"] = routes[destination.path] + (f"?{suffix}" if suffix else "")
-    for key in ("error", "fields"):
+    for key in ("error", "fields", "report"):
         if key in response_payload:
             payload[key] = response_payload[key]
     if not notices:
@@ -800,7 +825,7 @@ def _run_action(request, allowed_actions, handler):
         if not form.is_valid():
             return JsonResponse({"error": "Correct the highlighted fields.", "fields": form.errors}, status=400)
     # Device IDs are slugs; the other referenced primary keys are positive integers.
-    for name in ("image_id", "analysis_id", "track_id", "test_id", "sample_id", "user_id", "session_id"):
+    for name in ("image_id", "analysis_id", "track_id", "test_id", "sample_id", "user_id", "session_id", "report_id"):
         value = request.POST.get(name)
         if value is not None and (len(value) > 18 or not value.isascii() or not value.isdecimal() or int(value) < 1):
             return JsonResponse({"error": "Invalid record identifier.", "fields": {name: ["Enter a valid record ID."]}}, status=400)
@@ -824,6 +849,24 @@ def analyzer_action_api(request):
 @require_POST
 def dataset_action_api(request):
     return _run_action(request, DATASET_ACTIONS, lambda: views.training_dataset_module(request))
+
+
+@api_staff_required
+@require_POST
+def report_action_api(request):
+    def update_report():
+        if not request.POST.get("report_id"):
+            return JsonResponse({"error": "Choose a report to edit.", "fields": {"report_id": ["This field is required."]}}, status=400)
+        report = get_object_or_404(PotholeReport.objects.select_for_update(), pk=request.POST.get("report_id"))
+        form = RoadReportEditForm(request.POST, instance=report)
+        if not form.is_valid():
+            return JsonResponse({"error": "Correct the report details.", "fields": form.errors}, status=400)
+        form.save()
+        views.audit_dataset(request.user, "report-update", f"Updated road report {report.pk}.")
+        messages.success(request, f"Report #{report.pk} saved.")
+        return JsonResponse({"report": _report(report)})
+
+    return _run_action(request, {"update_report"}, update_report)
 
 
 @api_staff_required

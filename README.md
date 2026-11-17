@@ -179,6 +179,11 @@ Direct links to an analysis restore its report context. Existing unlinked runs
 remain available under Unassigned runs and are not automatically attached to a
 report. The report-link migration preserves all existing analysis data.
 
+The Reports sidebar module lists and searches road reports in pages of 50.
+Approved engineers and administrators can edit report location, device, severity,
+status, detection time, evidence image URL, and notes. Edits are validated and
+audited, and preserve the report's linked analyses.
+
 Analysis jobs use database leases and follow `queued -> running -> complete`, with retry, failed, and cancelled states. Expired worker leases are reclaimed. Each failure is appended to bounded error history, and the UI supports retry and cancellation.
 
 Video uploads and processed outputs are streamed rather than copied into web-worker memory. Detailed frame detections are gzip artifacts instead of large MySQL JSON values. Set the optional S3-compatible variables from `.env.example` to move media out of the local filesystem.

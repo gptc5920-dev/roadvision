@@ -160,6 +160,11 @@ class RoadReportForm(forms.ModelForm):
         fields = ["city", "device_id", "lat", "lng", "severity", "notes"]
 
 
+class RoadReportEditForm(RoadReportForm):
+    class Meta(RoadReportForm.Meta):
+        fields = RoadReportForm.Meta.fields + ["status", "detected_at", "image_url"]
+
+
 class FleetDeviceForm(forms.Form):
     camera_source = forms.ChoiceField(choices=FleetDevice.CameraSource.choices, required=False)
     device_id = forms.SlugField(max_length=80, help_text="Stable identifier, for example CAM-CAV-01.")
