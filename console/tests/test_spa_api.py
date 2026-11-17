@@ -80,6 +80,24 @@ class ReactSpaApiTests(TestCase):
                 self.assertTrue(VideoVisualizerAnalysis.objects.filter(pk=retained.pk).exists())
                 self.assertTrue(VideoPotholeTrack.objects.filter(pk=retained_track.pk).exists())
 
+    def test_direct_track_details_open_before_analysis_completes(self):
+        self.client.force_login(self.user)
+        for status in VideoVisualizerStatus.values:
+            with self.subTest(status=status):
+                analysis = VideoVisualizerAnalysis.objects.create(
+                    original_filename="survey.mp4", file_hash="a" * 64,
+                    file_type="mp4", status=status,
+                )
+                track = VideoPotholeTrack.objects.create(analysis=analysis, track_id=1)
+                response = self.client.get(f"/api/detections/?analysis={analysis.pk}&track={track.pk}")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual([item["id"] for item in response.json()["tracks"]], [track.pk])
+                self.assertEqual(response.json()["counts"]["total"], 1)
+                mismatched = self.client.get(f"/api/detections/?analysis={analysis.pk + 100}&track={track.pk}")
+                self.assertEqual(mismatched.json()["tracks"], [])
+                inventory = self.client.get(f"/api/detections/?analysis={analysis.pk}").json()
+                self.assertEqual(len(inventory["tracks"]), int(status == VideoVisualizerStatus.COMPLETE))
+
     def test_remove_running_analysis_returns_conflict_without_changing_it(self):
         self.client.force_login(self.user)
         analysis = VideoVisualizerAnalysis.objects.create(

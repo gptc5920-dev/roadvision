@@ -399,7 +399,6 @@ def fleet_api(request):
 def detections_api(request):
     tracks = (
         VideoPotholeTrack.objects.select_related("analysis__model_session")
-        .filter(analysis__status=VideoVisualizerStatus.COMPLETE)
         .order_by("-analysis__created_at", "track_id")
     )
     analysis_id, error = _query_integer(request, "analysis", default=None)
@@ -412,6 +411,8 @@ def detections_api(request):
         return error
     if track_id is not None:
         tracks = tracks.filter(pk=track_id)
+    else:
+        tracks = tracks.filter(analysis__status=VideoVisualizerStatus.COMPLETE)
     counts = tracks.aggregate(
         total=Count("id"),
         unresolved=Count("id", filter=Q(review_status=VideoTrackReviewStatus.UNRESOLVED)),
