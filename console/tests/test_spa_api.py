@@ -162,7 +162,7 @@ class ReactSpaApiTests(TestCase):
         self.assertEqual(overview.json()["metrics"]["openReports"], 1)
 
         update = self.client.post(
-            "/api/actions/modules/dispatch/",
+            "/api/actions/modules/live-map/",
             {"action": "update_report_status", "report_id": report.pk, "status": ReportStatus.RESOLVED},
         )
         self.assertEqual(update.status_code, 200)
@@ -182,7 +182,7 @@ class ReactSpaApiTests(TestCase):
             device_id="CAM-01",
         )
         response = self.client.post(
-            "/api/actions/modules/dispatch/",
+            "/api/actions/modules/live-map/",
             {"action": "update_report_status", "report_id": report.pk, "status": "invalid"},
         )
         self.assertEqual(response.status_code, 400)
@@ -192,22 +192,45 @@ class ReactSpaApiTests(TestCase):
 
     def test_action_routes_reject_missing_cross_domain_and_json_actions(self):
         self.client.force_login(self.user)
-        missing = self.client.post("/api/actions/modules/dispatch/", {})
+        missing = self.client.post("/api/actions/modules/live-map/", {})
         self.assertEqual(missing.status_code, 400)
 
         cross_domain = self.client.post(
-            "/api/actions/modules/dispatch/",
+            "/api/actions/modules/live-map/",
             {"action": "add_sample", "name": "Wrong route"},
         )
         self.assertEqual(cross_domain.status_code, 400)
         self.assertFalse(VideoDatasetSample.objects.exists())
 
         json_action = self.client.post(
-            "/api/actions/modules/dispatch/",
+            "/api/actions/modules/live-map/",
             data='{"action":"update_report_status"}',
             content_type="application/json",
         )
         self.assertEqual(json_action.status_code, 415)
+
+    def test_removed_dispatch_routes_do_not_update_reports(self):
+        self.client.force_login(self.user)
+        report = PotholeReport.objects.create(
+            lat=14.5995,
+            lng=120.9842,
+            severity=Severity.HIGH,
+            status=ReportStatus.OPEN,
+            detected_at=timezone.now(),
+            city="Manila",
+            device_id="CAM-01",
+        )
+        action = {
+            "action": "update_report_status",
+            "report_id": report.pk,
+            "status": ReportStatus.RESOLVED,
+        }
+        for path in ["/_authenticated/admin/dispatch/", "/api/actions/modules/dispatch/"]:
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 404 if path.startswith("/_authenticated/") else 405)
+                self.assertEqual(self.client.post(path, action).status_code, 404)
+        report.refresh_from_db()
+        self.assertEqual(report.status, ReportStatus.OPEN)
 
     def test_invalid_source_and_track_values_return_field_errors(self):
         self.client.force_login(self.user)

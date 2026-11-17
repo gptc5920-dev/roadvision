@@ -54,7 +54,6 @@ urlpatterns = [
     path("_authenticated/admin/overview/", views.module_placeholder, {"module": "overview"}, name="admin_overview"),
     path("_authenticated/admin/live-map/", views.module_placeholder, {"module": "live-map"}, name="admin_live_map"),
     path("_authenticated/admin/detections/", views.module_placeholder, {"module": "detections"}, name="admin_detections"),
-    path("_authenticated/admin/dispatch/", views.module_placeholder, {"module": "dispatch"}, name="admin_dispatch"),
     path("_authenticated/admin/fleet-cams/", views.module_placeholder, {"module": "fleet-cams"}, name="admin_fleet_cams"),
     path("_authenticated/admin/detection-sources/", views.module_placeholder, {"module": "detection-sources"}, name="admin_detection_sources"),
     path("_authenticated/admin/personnel/", views.module_placeholder, {"module": "personnel"}, name="admin_personnel"),

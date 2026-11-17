@@ -688,12 +688,10 @@ def _action_result(request, response):
         "/api/actions/modules/video-analyzer/": "/app/analyzer",
         "/api/actions/dataset/": "/app/dataset",
         "/api/actions/modules/fleet-cams/": "/app/fleet",
-        "/api/actions/modules/dispatch/": "/app/dispatch",
         "/_authenticated/admin/video-analyzer/": "/app/analyzer",
         "/_authenticated/admin/training-dataset/": "/app/dataset",
         "/_authenticated/admin/fleet-cams/": "/app/fleet",
         "/_authenticated/admin/live-map/": "/app/map",
-        "/_authenticated/admin/dispatch/": "/app/dispatch",
         "/_authenticated/admin/detections/": "/app/detections",
     }
     if ok and not destination.scheme and not destination.netloc and destination.path in routes:
@@ -731,7 +729,6 @@ MODULE_ACTIONS = {
     "overview": set(),
     "live-map": {"update_report_status"},
     "detections": {"review_track", "remove_track", "add_track_to_dataset", "merge_tracks"},
-    "dispatch": {"update_report_status"},
     "fleet-cams": {
         "save_fleet_device", "stop_fleet_stream", "analyze_fleet_stream",
         "analyze_fleet_capture", "toggle_device_status",
