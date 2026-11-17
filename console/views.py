@@ -2144,6 +2144,23 @@ def yolo_dataset_export(request):
 
 @staff_required
 def video_visualizer(request):
+    if request.method == "POST" and request.POST.get("action") == "remove_analysis":
+        with transaction.atomic():
+            analysis = get_object_or_404(
+                VideoVisualizerAnalysis.objects.select_for_update(),
+                pk=request.POST.get("analysis_id"),
+            )
+            if analysis.status == VideoVisualizerStatus.RUNNING:
+                return JsonResponse(
+                    {"error": "Stop or cancel this analysis before removing it."},
+                    status=409,
+                )
+            analysis_id = analysis.pk
+            analysis.delete()
+            audit_dataset(request.user, "video-remove", f"Removed video visualizer analysis {analysis_id}.")
+        messages.success(request, "Video analysis removed.")
+        return redirect(request.path)
+
     configuration = analyzer_configuration()
     upload_form = VideoVisualizerUploadForm(default_confidence=configuration.confidence_threshold)
 

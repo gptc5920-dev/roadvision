@@ -717,7 +717,7 @@ def _action_result(request, response):
 
 
 ANALYZER_ACTIONS = {
-    "stop_continuous_analysis", "cancel_analysis", "retry_analysis", "restart_analysis",
+    "stop_continuous_analysis", "cancel_analysis", "retry_analysis", "restart_analysis", "remove_analysis",
     "reanalyze_with_sensitivity", "reanalyze_with_estimated_masks", "upload_video",
     "set_ground_truth", "review_track", "merge_tracks", "remove_track", "add_track_to_dataset",
 }

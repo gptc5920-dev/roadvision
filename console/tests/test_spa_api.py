@@ -49,6 +49,75 @@ class ReactSpaApiTests(TestCase):
         )
         UserRole.objects.update_or_create(user=self.user, defaults={"role": AppRole.ADMIN})
 
+    def test_remove_analysis_deletes_only_the_requested_run_and_its_tracks(self):
+        self.client.force_login(self.user)
+        retained = VideoVisualizerAnalysis.objects.create(
+            original_filename="keep.mp4", file_hash="b" * 64, file_type="mp4",
+            status=VideoVisualizerStatus.COMPLETE,
+        )
+        retained_track = VideoPotholeTrack.objects.create(analysis=retained, track_id=1)
+        for status in [
+            VideoVisualizerStatus.QUEUED, VideoVisualizerStatus.RETRYING,
+            VideoVisualizerStatus.COMPLETE, VideoVisualizerStatus.FAILED,
+            VideoVisualizerStatus.CANCELLED,
+        ]:
+            with self.subTest(status=status):
+                analysis = VideoVisualizerAnalysis.objects.create(
+                    original_filename="remove.mp4", file_hash="a" * 64,
+                    file_type="mp4", status=status,
+                )
+                track = VideoPotholeTrack.objects.create(analysis=analysis, track_id=1)
+                analysis_id, track_id = analysis.pk, track.pk
+                response = self.client.post(
+                    "/api/actions/analyzer/",
+                    {"action": "remove_analysis", "analysis_id": analysis_id},
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(response.json()["ok"])
+                self.assertEqual(response.json()["redirect"], "/app/analyzer")
+                self.assertFalse(VideoVisualizerAnalysis.objects.filter(pk=analysis_id).exists())
+                self.assertFalse(VideoPotholeTrack.objects.filter(pk=track_id).exists())
+                self.assertTrue(VideoVisualizerAnalysis.objects.filter(pk=retained.pk).exists())
+                self.assertTrue(VideoPotholeTrack.objects.filter(pk=retained_track.pk).exists())
+
+    def test_remove_running_analysis_returns_conflict_without_changing_it(self):
+        self.client.force_login(self.user)
+        analysis = VideoVisualizerAnalysis.objects.create(
+            original_filename="running.mp4", file_hash="a" * 64, file_type="mp4",
+            status=VideoVisualizerStatus.RUNNING, worker_id="active-worker",
+        )
+        track = VideoPotholeTrack.objects.create(analysis=analysis, track_id=1)
+        response = self.client.post(
+            "/api/actions/analyzer/",
+            {"action": "remove_analysis", "analysis_id": analysis.pk},
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.json()["ok"])
+        analysis.refresh_from_db()
+        self.assertEqual(analysis.status, VideoVisualizerStatus.RUNNING)
+        self.assertEqual(analysis.worker_id, "active-worker")
+        self.assertTrue(VideoPotholeTrack.objects.filter(pk=track.pk).exists())
+
+    def test_remove_analysis_requires_staff_and_a_valid_record(self):
+        analysis = VideoVisualizerAnalysis.objects.create(
+            original_filename="protected.mp4", file_hash="a" * 64, file_type="mp4",
+        )
+        action = {"action": "remove_analysis", "analysis_id": analysis.pk}
+        self.assertEqual(self.client.post("/api/actions/analyzer/", action).status_code, 401)
+        self.client.force_login(self.user)
+        UserRole.objects.filter(user=self.user).update(role=AppRole.VIEWER)
+        self.assertEqual(self.client.post("/api/actions/analyzer/", action).status_code, 403)
+        self.assertTrue(VideoVisualizerAnalysis.objects.filter(pk=analysis.pk).exists())
+        UserRole.objects.filter(user=self.user).update(role=AppRole.ENGINEER)
+        for identifier, expected in [("invalid", 400), (analysis.pk + 100, 404)]:
+            with self.subTest(identifier=identifier):
+                response = self.client.post(
+                    "/api/actions/analyzer/",
+                    {"action": "remove_analysis", "analysis_id": identifier},
+                )
+                self.assertEqual(response.status_code, expected)
+        self.assertEqual(self.client.post("/api/actions/analyzer/", action).status_code, 200)
+
     def test_backend_root_is_json_and_does_not_serve_react(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
