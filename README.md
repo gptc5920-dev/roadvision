@@ -76,6 +76,15 @@ Administrators register vehicle cameras in **Fleet Cams** with a stable device I
 
 Browser capture requires camera permission and HTTPS (localhost is also accepted by modern browsers). Trusted private-network camera feeds require `ALLOW_PRIVATE_STREAMS=true`; leave it disabled when private RTSP/HTTP sources are not needed. Camera credentials must not be embedded in saved stream URLs.
 
+Fleet registration and the Analyzer source selector support Stream URL, dashcam,
+laptop camera, and mobile camera sources. Browser capture previews the selected
+camera, records up to 45 seconds without audio, and submits the clip for analysis.
+Dashcams can use a network stream, an uploaded clip, or a USB camera recognized by
+the browser. Stream URLs retain continuous detection. Camera tracks stop when
+recording finishes, the source changes, or the capture dialog closes. Apply
+database migrations before deploying the updated API so registered camera source
+choices can be saved.
+
 Continuous analysis is intended for RTSP/HTTP/HTTPS dashcam or IP-camera feeds. Browser-only phone cameras still use captured clips; expose the phone as a trusted stream source when it must operate as an always-on dashcam.
 
 ## Readiness gates

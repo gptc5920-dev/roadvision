@@ -77,6 +77,12 @@ class PotholeReport(models.Model):
 
 
 class FleetDevice(models.Model):
+    class CameraSource(models.TextChoices):
+        STREAM = "stream", "Stream URL"
+        DASHCAM = "dashcam", "Dashcam"
+        LAPTOP = "laptop", "Laptop camera"
+        MOBILE = "mobile", "Mobile camera"
+
     id = models.CharField(max_length=80, primary_key=True)
     name = models.CharField(max_length=160)
     city = models.CharField(max_length=120)
@@ -85,6 +91,7 @@ class FleetDevice(models.Model):
     fps = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     model_version = models.CharField(max_length=80)
     stream_url = models.CharField(max_length=500, blank=True)
+    camera_source = models.CharField(max_length=20, choices=CameraSource.choices, default=CameraSource.STREAM)
     road_section = models.CharField(max_length=180, blank=True)
     chainage_station = models.CharField(max_length=80, blank=True)
 

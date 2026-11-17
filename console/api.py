@@ -187,6 +187,7 @@ def _device(device):
         "modelVersion": device.model_version,
         "hasStream": bool(device.stream_url),
         "streamUrl": device.stream_url,
+        "cameraSource": device.camera_source,
         "roadSection": device.road_section,
         "chainageStation": device.chainage_station,
     }

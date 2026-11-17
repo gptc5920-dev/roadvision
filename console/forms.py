@@ -150,6 +150,7 @@ class ProfileSettingsForm(forms.Form):
 
 
 class FleetDeviceForm(forms.Form):
+    camera_source = forms.ChoiceField(choices=FleetDevice.CameraSource.choices, required=False)
     device_id = forms.SlugField(max_length=80, help_text="Stable identifier, for example CAM-CAV-01.")
     name = forms.CharField(max_length=160)
     city = forms.CharField(max_length=120)
@@ -186,6 +187,7 @@ class FleetDeviceForm(forms.Form):
                 "fps": self.cleaned_data["fps"],
                 "model_version": self.cleaned_data.get("model_version", "").strip() or "fleet-camera",
                 "stream_url": self.cleaned_data.get("stream_url", ""),
+                "camera_source": self.cleaned_data.get("camera_source") or FleetDevice.CameraSource.STREAM,
                 "road_section": self.cleaned_data.get("road_section", "").strip(),
                 "chainage_station": self.cleaned_data.get("chainage_station", "").strip(),
             },
@@ -423,6 +425,7 @@ class VideoVisualizerUploadForm(forms.Form):
     gps_file = forms.FileField(required=False)
     stream_url = forms.CharField(max_length=500, required=False)
     source_type = forms.ChoiceField(choices=VideoSourceType.choices, initial=VideoSourceType.UPLOAD)
+    camera_source = forms.ChoiceField(choices=FleetDevice.CameraSource.choices, required=False)
     confidence_threshold = forms.TypedChoiceField(
         choices=SENSITIVITY_CHOICES,
         coerce=int,

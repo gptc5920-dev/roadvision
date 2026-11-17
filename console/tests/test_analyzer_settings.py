@@ -596,8 +596,8 @@ class AnalyzerSettingsTests(TestCase):
 
             response = self.client.get(f"/api/analyzer/?analysis={analysis.pk}")
             payload = response.json()["selected"]["tracks"][0]
-            self.assertEqual(payload["snapshotFrameUrl"], track.snapshot_frame.url)
-            self.assertEqual(payload["snapshotCropUrl"], track.snapshot_crop.url)
+            self.assertEqual(payload["snapshotFrameUrl"], f"/api/detections/{track.pk}/snapshot/frame/")
+            self.assertEqual(payload["snapshotCropUrl"], f"/api/detections/{track.pk}/snapshot/crop/")
 
     def test_analysis_summary_uses_compact_defect_composition_chart(self):
         analysis = VideoVisualizerAnalysis.objects.create(

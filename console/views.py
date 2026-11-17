@@ -5,6 +5,7 @@ import io
 import json
 import ipaddress
 import logging
+import math
 import mimetypes
 import os
 import random
@@ -361,7 +362,7 @@ def read_uploaded_image(upload):
     }
 
 
-def read_uploaded_video(upload):
+def read_uploaded_video(upload, *, recorded_capture=False):
     extension = os.path.splitext(upload.name)[1].lower()
     if extension not in ALLOWED_VIDEO_EXTENSIONS:
         raise ValueError("Unsupported video type. Upload MP4, AVI, MOV, MKV, or WEBM.")
@@ -394,18 +395,36 @@ def read_uploaded_video(upload):
         capture = cv2.VideoCapture(temp_path)
         if not capture.isOpened():
             raise ValueError("Video could not be opened. The file may be corrupted or encoded with an unsupported codec.")
-        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-        fps = float(capture.get(cv2.CAP_PROP_FPS) or 0)
-        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        capture.release()
+        try:
+            width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+            height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+            fps = float(capture.get(cv2.CAP_PROP_FPS) or 0)
+            count = float(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+            frame_count = int(count) if math.isfinite(count) else 0
+            # Browser MediaRecorder WebM files may omit their duration/index.
+            # Count actual frames only for bounded camera captures in that case.
+            if (
+                recorded_capture and extension == ".webm" and 0 < fps <= 240
+                and (frame_count <= 0 or frame_count > fps * 7200)
+            ):
+                frame_count = 0
+                max_frames = int(fps * 46)
+                while frame_count <= max_frames:
+                    ok, _frame = capture.read()
+                    if not ok:
+                        break
+                    frame_count += 1
+                if frame_count > max_frames:
+                    raise ValueError("Record a camera clip of at most 45 seconds, or upload a finalized video file.")
+        finally:
+            capture.release()
     finally:
         if owns_temp_path and temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
     if width < 160 or height < 120:
         raise ValueError("Video resolution must be at least 160x120.")
-    if fps <= 0 or fps > 240:
+    if not math.isfinite(fps) or fps <= 0 or fps > 240:
         raise ValueError("Video frame rate must be readable and no higher than 240 FPS.")
     if frame_count <= 0:
         raise ValueError("Video must contain at least one readable frame.")
@@ -727,6 +746,8 @@ def save_visualizer_video(upload, filename, metadata, form, configuration, user,
     if gps_upload:
         gps_points, route_metadata = parse_gps_upload(gps_upload)
         gps_upload.seek(0)
+    if form.cleaned_data.get("camera_source"):
+        route_metadata["camera_source"] = form.cleaned_data["camera_source"]
     analysis = VideoVisualizerAnalysis(
         original_filename=filename,
         file_hash=metadata["file_hash"],
@@ -785,6 +806,8 @@ def create_visualizer_stream_analysis(stream_url, metadata, form, configuration,
         gps_points, route_metadata = parse_gps_upload(gps_upload)
         gps_upload.seek(0)
         gps_data = b"".join(gps_upload.chunks())
+    if form.cleaned_data.get("camera_source"):
+        route_metadata["camera_source"] = form.cleaned_data["camera_source"]
     analysis = VideoVisualizerAnalysis(
         source_url=stream_url,
         original_filename=stream_url,
@@ -856,6 +879,7 @@ def attach_fleet_source(analysis, device, capture_type):
             "fleet_device_id": device.pk,
             "fleet_device_name": device.name,
             "fleet_device_city": device.city,
+            "camera_source": (analysis.route_metadata or {}).get("camera_source") or device.camera_source,
         }
     )
     analysis.route_metadata = route_metadata
@@ -2312,7 +2336,13 @@ def video_visualizer(request):
                     return redirect("admin_video_analyzer_explicit")
                 try:
                     if upload:
-                        metadata = read_uploaded_video(upload)
+                        metadata = read_uploaded_video(
+                            upload,
+                            recorded_capture=upload_form.cleaned_data.get("camera_source") in {
+                                FleetDevice.CameraSource.LAPTOP, FleetDevice.CameraSource.MOBILE,
+                                FleetDevice.CameraSource.DASHCAM,
+                            },
+                        )
                         analysis = save_visualizer_video(
                             upload,
                             upload.name,
@@ -3188,18 +3218,27 @@ def module_placeholder(request, module):
                 messages.error(request, "Fleet capture analysis is blocked: " + " ".join(readiness["errors"]))
             else:
                 try:
+                    camera_source = request.POST.get("camera_source") or device.camera_source
+                    if camera_source == FleetDevice.CameraSource.STREAM:
+                        camera_source = FleetDevice.CameraSource.DASHCAM
+                    if camera_source not in {
+                        FleetDevice.CameraSource.DASHCAM, FleetDevice.CameraSource.LAPTOP,
+                        FleetDevice.CameraSource.MOBILE,
+                    }:
+                        raise ValueError("Select a dashcam, laptop camera, or mobile camera.")
                     confidence_threshold = int(
                         request.POST.get("confidence_threshold") or configuration.confidence_threshold
                     )
                     if confidence_threshold not in {25, 35, 50}:
                         confidence_threshold = configuration.confidence_threshold
-                    metadata = read_uploaded_video(upload)
+                    metadata = read_uploaded_video(upload, recorded_capture=True)
                     upload_form = fleet_analysis_form(
                         device,
                         configuration,
                         confidence_threshold,
-                        VideoSourceType.DASHCAM,
+                        VideoSourceType.DASHCAM if camera_source == FleetDevice.CameraSource.DASHCAM else VideoSourceType.WEBCAM,
                     )
+                    upload_form.cleaned_data["camera_source"] = camera_source
                     analysis = save_visualizer_video(
                         upload,
                         upload.name,

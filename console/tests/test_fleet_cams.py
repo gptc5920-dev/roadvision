@@ -1,11 +1,12 @@
 import hashlib
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
 from console.models import (
@@ -20,6 +21,7 @@ from console.models import (
     VideoVisualizerMode,
     VideoVisualizerStatus,
 )
+from console.views import read_uploaded_video
 
 
 @override_settings(AUTO_START_ANALYSIS_WORKER=False)
@@ -83,6 +85,71 @@ class FleetCameraAnalyzerTests(TestCase):
         self.assertEqual(device["name"], "Cavite Survey Cam 01")
         self.assertTrue(device["hasStream"])
         self.assertEqual(device["streamUrl"], self.device.stream_url)
+        self.assertEqual(device["cameraSource"], "stream")
+
+    def test_camera_source_choices_are_saved_and_returned_by_the_api(self):
+        for source in FleetDevice.CameraSource.values:
+            with self.subTest(source=source):
+                response = self.client.post("/api/actions/modules/fleet-cams/", {
+                    "action": "save_fleet_device", "device_id": f"camera-{source}",
+                    "name": f"Survey {source}", "city": "Cavite", "status": "online",
+                    "fps": "30", "camera_source": source,
+                    "stream_url": "https://camera.example.com/feed" if source == "stream" else "",
+                })
+                self.assertEqual(response.status_code, 200, response.content)
+                self.assertEqual(FleetDevice.objects.get(pk=f"camera-{source}").camera_source, source)
+                devices = {device["id"]: device for device in self.client.get("/api/fleet/").json()["devices"]}
+                self.assertEqual(devices[f"camera-{source}"]["cameraSource"], source)
+
+    def test_invalid_camera_source_cannot_register_a_device(self):
+        response = self.client.post("/api/actions/modules/fleet-cams/", {
+            "action": "save_fleet_device", "device_id": "bad-camera", "name": "Bad camera",
+            "city": "Cavite", "status": "online", "fps": "30", "camera_source": "invalid",
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("camera_source", response.json()["fields"])
+        self.assertFalse(FleetDevice.objects.filter(pk="bad-camera").exists())
+
+    @patch("console.views.read_uploaded_video")
+    def test_laptop_mobile_and_dashcam_clips_keep_their_source(self, metadata_reader):
+        metadata_reader.return_value = {
+            "file_hash": "a" * 64, "file_size": 15, "file_type": "webm",
+            "width": 1280, "height": 720, "fps": 30, "frame_count": 60,
+            "duration_seconds": 2, "extension": ".webm",
+        }
+        for source in ["laptop", "mobile", "dashcam"]:
+            with self.subTest(source=source):
+                response = self.client.post("/api/actions/modules/fleet-cams/", {
+                    "action": "analyze_fleet_capture", "device_id": self.device.pk,
+                    "camera_source": source,
+                    "video": SimpleUploadedFile(f"{source}.webm", b"recorded-video", content_type="video/webm"),
+                })
+                self.assertEqual(response.status_code, 200, response.content)
+                analysis = VideoVisualizerAnalysis.objects.get(original_filename=f"{source}.webm")
+                self.assertEqual(analysis.source_type, "dashcam" if source == "dashcam" else "webcam")
+                self.assertEqual(analysis.route_metadata["camera_source"], source)
+                self.assertEqual(analysis.route_metadata["fleet_device_id"], self.device.pk)
+                self.assertEqual(response.json()["redirect"], f"/app/analyzer?analysis={analysis.pk}")
+                self.assertTrue(metadata_reader.call_args.kwargs["recorded_capture"])
+
+    @patch("console.views.read_uploaded_video")
+    def test_analyzer_accepts_browser_camera_uploads(self, metadata_reader):
+        metadata_reader.return_value = {
+            "file_hash": "c" * 64, "file_size": 15, "file_type": "webm",
+            "width": 1280, "height": 720, "fps": 30, "frame_count": 60,
+            "duration_seconds": 2, "extension": ".webm",
+        }
+        for source in ["laptop", "mobile", "dashcam"]:
+            with self.subTest(source=source):
+                response = self.client.post("/api/actions/analyzer/", {
+                    "action": "upload_video", "source_type": "dashcam" if source == "dashcam" else "webcam",
+                    "camera_source": source, "road_section": "Road 1",
+                    "video": SimpleUploadedFile(f"analyzer-{source}.webm", b"recorded-video", content_type="video/webm"),
+                })
+                self.assertEqual(response.status_code, 200, response.content)
+                analysis = VideoVisualizerAnalysis.objects.get(original_filename=f"analyzer-{source}.webm")
+                self.assertEqual(analysis.route_metadata["camera_source"], source)
+                self.assertTrue(metadata_reader.call_args.kwargs["recorded_capture"])
 
     def test_admin_can_register_a_fleet_camera(self):
         response = self.client.post(
@@ -284,3 +351,44 @@ class FleetCameraAnalyzerTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertFalse(VideoVisualizerAnalysis.objects.exists())
         metadata_reader.assert_not_called()
+
+
+class CameraRecordingMetadataTests(SimpleTestCase):
+    def fake_cv2(self, count):
+        capture = Mock()
+        capture.get.side_effect = lambda prop: {1: 640, 2: 480, 3: 30, 4: count}[prop]
+        capture.read.side_effect = [(True, None)] * 60 + [(False, None)]
+        return SimpleNamespace(
+            VideoCapture=Mock(return_value=capture), CAP_PROP_FRAME_WIDTH=1,
+            CAP_PROP_FRAME_HEIGHT=2, CAP_PROP_FPS=3, CAP_PROP_FRAME_COUNT=4,
+        ), capture
+
+    def test_browser_webm_without_duration_counts_decodable_frames(self):
+        for count in [0, -1, float("nan"), float("inf")]:
+            with self.subTest(count=count):
+                cv2, capture = self.fake_cv2(count)
+                with patch.dict("sys.modules", {"cv2": cv2}):
+                    metadata = read_uploaded_video(
+                        SimpleUploadedFile("camera.webm", b"recorded-video"), recorded_capture=True,
+                    )
+                self.assertEqual(metadata["frame_count"], 60)
+                self.assertEqual(metadata["duration_seconds"], 2)
+                capture.release.assert_called_once()
+
+    def test_duration_fallback_is_bounded_and_releases_the_capture(self):
+        cv2, capture = self.fake_cv2(0)
+        capture.read.side_effect = None
+        capture.read.return_value = (True, None)
+        with patch.dict("sys.modules", {"cv2": cv2}):
+            with self.assertRaisesRegex(ValueError, "at most 45 seconds"):
+                read_uploaded_video(SimpleUploadedFile("camera.webm", b"recorded-video"), recorded_capture=True)
+        self.assertEqual(capture.read.call_count, 30 * 46 + 1)
+        capture.release.assert_called_once()
+
+    def test_regular_uploads_with_invalid_metadata_are_not_scanned(self):
+        cv2, capture = self.fake_cv2(0)
+        with patch.dict("sys.modules", {"cv2": cv2}):
+            with self.assertRaisesRegex(ValueError, "at least one readable frame"):
+                read_uploaded_video(SimpleUploadedFile("camera.webm", b"recorded-video"))
+        capture.read.assert_not_called()
+        capture.release.assert_called_once()
